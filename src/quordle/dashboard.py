@@ -360,5 +360,5 @@ def main() -> None:
         print("Wrote PNGs to", args.png_dir)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover — exercised by running the script, not by tests
     main()

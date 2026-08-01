@@ -29,6 +29,24 @@ def test_run_game_produces_schema_valid_record():
     assert record["won"] == (record["boardsSolved"] == 4)
 
 
+def test_run_game_records_a_loss():
+    # A single guess (SLATE, the fixed opener) can't solve four boards whose
+    # answers all differ from it, so the game ends unsolved: won is False,
+    # every board's solvedOnGuess is 0, and boardsSolved is under 4.
+    record = run_game(
+        ["CRANE", "PLATE", "GRAPE", "STOMP"],
+        FixedOpenersThenGreedy(),
+        seq=1,
+        date="2026-08-01",
+        allowed=wordlist.load_allowed(),
+        max_guesses=1,
+    )
+    assert record["won"] is False
+    assert record["boardsSolved"] < 4
+    assert record["boardsSolved"] == 0
+    assert all(w["solvedOnGuess"] == 0 for w in record["words"])
+
+
 def test_run_game_merges_metadata():
     record = run_game(
         ["CRANE", "SLATE", "PLATE", "GRAPE"],
