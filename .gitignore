@@ -1,0 +1,18 @@
+# Game logs — kept locally in data/, never committed
+data/*.jsonl
+!data/*.sample.jsonl
+
+# Generated output
+quordle_dashboard.html
+*_dashboard.html
+charts/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
