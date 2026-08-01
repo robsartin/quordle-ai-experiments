@@ -3,6 +3,7 @@
 from types import TracebackType
 
 from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from quordle.browser import scraper
 from quordle.engine import TurnResult
@@ -80,20 +81,36 @@ class BrowserEnv:
             raise ValueError(f"invalid guess: {guess!r}")
         before = scraper.count_played(self._read_boards())
         self._type_word(guess)
-        # Wait until board 1's row (before+1) is fully revealed (no tile still
-        # "being guessed"); this proves the site accepted the word and the row
-        # advanced. Written as a block function (rather than one long
-        # expression) to stay within the project's line-length limit.
+        # Wait until board 1's SPECIFIC target row (0-based index `before`,
+        # the row about to be played) leaves the unplayed state, i.e. all 5
+        # of its tiles are neither "being guessed" nor "is a future guess"
+        # (so they're correct / different spot / incorrect). This proves the
+        # site accepted the word and that exact row advanced.
+        #
+        # An earlier version checked "any row not still being guessed" across
+        # the whole board, which is wrong: with 45 tiles/board and exactly
+        # one "being guessed" row at a time, the other 40 tiles are either
+        # already-revealed earlier rows or "is a future guess" rows -- the
+        # count of non-"being guessed" tiles is constant regardless of
+        # whether the new guess was accepted, so the wait resolved instantly
+        # every time and a truly-rejected guess never timed out (GuessRejected
+        # was unreachable). Keying off the specific target row's own state
+        # fixes both: it only flips once genuinely revealed, and stays
+        # unplayed forever if the site rejects the guess, so a rejection now
+        # correctly times out into GuessRejected. Written as a block function
+        # (rather than one long expression) to stay within the project's
+        # line-length limit.
         wait_js = """
             (n) => {
                 const boxes = document.querySelectorAll(
                     '[aria-label="Game Board 1"] .quordle-box'
                 );
-                if (!boxes.length) return false;
-                const revealed = [...boxes].filter(
-                    (e) => !e.getAttribute('aria-label').includes('being guessed')
-                );
-                return revealed.length >= (n + 1) * 5;
+                const row = [...boxes].slice(n * 5, n * 5 + 5);
+                if (row.length < 5) return false;
+                return row.every((e) => {
+                    const label = e.getAttribute('aria-label') || '';
+                    return !label.includes('being guessed') && !label.includes('future guess');
+                });
             }
         """
         try:
@@ -102,7 +119,7 @@ class BrowserEnv:
                 arg=before,
                 timeout=REVEAL_TIMEOUT_MS,
             )
-        except Exception as exc:  # row never advanced -> rejected word
+        except PlaywrightTimeoutError as exc:  # row never advanced -> rejected word
             raise GuessRejected(f"guess not accepted by the site: {guess!r}") from exc
         boards = self._read_boards()
         used = scraper.count_played(boards)

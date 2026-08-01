@@ -24,3 +24,20 @@ def test_browser_env_plays_two_guesses():
         assert env.remaining_guesses() == 8
         env.submit("CURIO")
         assert env.remaining_guesses() == 7
+
+
+def test_browser_env_raises_guess_rejected_for_word_the_site_refuses():
+    from quordle.browser.browser_env import BrowserEnv, GuessRejected
+
+    # "ZZZZZ" is not a real word in any Wordle-style dictionary, so the live
+    # site will refuse it and the target row will never advance. It's
+    # injected directly into `allowed` (bypassing quordle's own wordlist) so
+    # this test exercises BrowserEnv's site-rejection handling specifically,
+    # not our local allowed-guess validation (already covered by the
+    # ValueError case implicitly via the `allowed` contract).
+    allowed = frozenset({"ZZZZZ"})
+    with BrowserEnv(allowed=allowed, headless=True) as env:
+        with pytest.raises(GuessRejected):
+            env.submit("ZZZZZ")
+        # the rejected guess must not have consumed a turn
+        assert env.remaining_guesses() == 9
