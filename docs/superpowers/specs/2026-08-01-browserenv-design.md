@@ -8,8 +8,8 @@
 
 ## Goal
 
-Have **Claude play a real Quordle game on quordle.com** by implementing `BrowserEnv`, an
-`Environment` that drives the live site. Because everything upstream is answer-blind and
+Have **Claude play a real Quordle game on `beta.quordle.com`** by implementing `BrowserEnv`,
+an `Environment` that drives the live site. Because everything upstream is answer-blind and
 talks only to the `Environment` interface, the `solver`, `LLMPolicy`, and `ClaudeProvider`
 drive the live game **unchanged** — the browser is a drop-in swap for `SimEngine` ([ADR 13](../../adr/0013-solver-environment-separation.md)).
 
@@ -26,25 +26,31 @@ This increment: **one Practice game, Claude-played, end-to-end, logged.**
 
 ## What the live-site scout established (2026-08-01)
 
-quordle.com redirects to **merriam-webster.com/games/quordle**. Concrete, verified facts the
-design depends on:
+**Target site: `beta.quordle.com`** — a standalone Quordle (same underlying codebase as the
+Merriam-Webster version, but without ads/chrome). Concrete, verified facts the design depends
+on (confirmed on beta; the MW site shares the same aria-label scheme, so this is portable):
 
 - **Practice mode** (unlimited replays) uses Classic rules: **9 guesses, 4 boards**, matching
-  `SimEngine` (`max_guesses=9`, `num_boards=4`). Reached via the mode menu → "Practice".
+  `SimEngine` (`max_guesses=9`, `num_boards=4`). On beta it's a **top-nav tab** (`Practice`,
+  next to `Daily`) — simplest possible access.
 - **DOM structure (stable selectors):**
-  - Four boards: `[aria-label="Game Board 1"]` … `[aria-label="Game Board 4"]`.
-  - Each board has 9 rows: `.quordle-guess-row`.
-  - Each row has 5 tiles: `.quordle-box`.
-  - On-screen keyboard: `.quordle-key` (letter keys carry `aria-label` like `'A' key…`;
-    Enter key `aria-label="Enter Key"`, Backspace `aria-label="Backspace Key"`).
+  - Four boards: `[aria-label="Game Board 1"]` … `[aria-label="Game Board 4"]` (inside
+    `[aria-label="Game Boards"]` → `Game Boards Row 1/2`).
+  - Each board contains **45 `.quordle-box` tiles = 9 rows × 5**, in DOM order. Rows are plain
+    `div.flex.w-full` wrappers (on MW they additionally carry `.quordle-guess-row`, absent on
+    beta) — so **the scraper chunks a board's `.quordle-box` list into rows of 5** rather than
+    depending on a row class. Row *r* (0-indexed) is the *r*-th chunk.
+  - On-screen keyboard: `.quordle-key` (28 keys); letter keys' `textContent` is the letter,
+    Enter and Backspace keys identifiable by their label/symbol.
   - **There is no `<input>` element** — guesses are entered via the on-screen keyboard.
-- **Feedback is in tile `aria-label` text** (semantic — preferred over fragile Tailwind color
-  classes):
+- **Feedback is in tile `aria-label` text** (semantic — preferred over the Tailwind color
+  classes, though those exist too: grey `bg-gray-200`, yellow `bg-box-diff`, green
+  `bg-box-correct`):
   - `"'C' (letter 1) is incorrect"` → **grey** (`Mark.GREY`).
-  - `"'I' (letter 4) is in a different spot"` → **yellow** (`Mark.YELLOW`).
-  - `"'X' (letter N) is correct"` → **green** (`Mark.GREEN`) — exact "correct" wording to be
-    confirmed from a green tile during implementation.
-  - Un-guessed tile: `"'Blank' (letter N) is being guessed"` (or similar).
+  - `"'O' (letter 5) is in a different spot"` → **yellow** (`Mark.YELLOW`).
+  - `"'X' (letter N) is correct"` → **green** (`Mark.GREEN`) — the `bg-box-correct` class is
+    present; the exact "is correct" wording is confirmed at step 1 from a green tile.
+  - Un-guessed tile: `"'Blank' (letter N) is being guessed"`.
 - **Input works via programmatic key activation.** Raw synthetic OS keystrokes did not
   register, but dispatching clicks on the `.quordle-key` buttons did (verified by entering a
   guess). Playwright will click the keys (or use its trusted `keyboard` API if that registers).
@@ -75,9 +81,11 @@ Claude (LLMPolicy + ClaudeProvider) ──▶ solver ──▶ BrowserEnv.submit
    *Depends on:* `quordle.scoring` (`Mark`/`Pattern`), `quordle.engine` (`BoardState`).
 
 2. **`browser_env.py`** — `class BrowserEnv` implementing `Environment`.
-   - Constructor opens a Playwright Chromium page, navigates to MW Quordle, enters **Practice**
-     mode, and confirms an empty 4×9 board. Config: `headless: bool = True`, `allowed:
-     frozenset[str]`, `max_guesses = 9`, `num_boards = 4`.
+   - Constructor opens a Playwright Chromium page, navigates to **`beta.quordle.com`**, clicks
+     the **Practice** tab, and confirms an empty 4×9 board (each board's `.quordle-box` count
+     is 45, all "being guessed"). Config: `headless: bool = True`, `allowed: frozenset[str]`,
+     `max_guesses = 9`, `num_boards = 4`. Reads a board's row *r* by chunking its 45
+     `.quordle-box` into 9 rows of 5 and taking chunk *r*.
    - `submit(guess)`: validate locally (5 letters, in `allowed`) → **enter the word** by
      clicking each letter's `.quordle-key` then the Enter key → **wait for the reveal** to
      settle → **detect rejection** (the guessed row did not advance / an error toast appeared);
