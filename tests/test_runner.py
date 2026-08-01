@@ -110,3 +110,12 @@ def test_build_policy_factory_claude_metadata():
         "assist": "constraints",
         "mode": "claude",
     }
+
+
+def test_env_choice_default_and_parse():
+    from quordle.runner import build_arg_parser
+
+    parser = build_arg_parser()
+    assert parser.parse_args([]).env == "sim"
+    assert parser.parse_args(["--env", "browser", "--headed"]).env == "browser"
+    assert parser.parse_args(["--env", "browser", "--headed"]).headed is True

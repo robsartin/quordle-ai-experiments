@@ -41,7 +41,14 @@ pip install -e ".[dev]"
 quordle-sim -n 100 --seed 0                       # heuristic games -> data/quordle_games.jsonl
 quordle-sim --player claude -n 5 --assist none    # Claude-played games (needs API access)
 quordle-stats                                     # build quordle_dashboard.html
+
+python -m playwright install chromium             # one-time, needed for --env browser
+quordle-sim --env browser --player claude         # plays one live quordle.com game (needs ANTHROPIC_API_KEY)
 ```
+
+`--env browser` plays a single live game against beta.quordle.com via Playwright
+(headless by default; pass `--headed` to watch it) and logs it with `mode:"browser"`
+instead of `mode:"sim"`/`mode:"claude"`.
 
 Open `quordle_dashboard.html` in any browser.
 

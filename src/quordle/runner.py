@@ -116,7 +116,44 @@ def build_policy_factory(
     raise ValueError(f"unknown player: {player!r}")
 
 
-def main() -> None:
+def run_browser_game(
+    policy: Policy,
+    *,
+    seq: int,
+    date: str,
+    allowed: frozenset[str],
+    headless: bool,
+    metadata: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    from quordle.browser.browser_env import BrowserEnv
+
+    with BrowserEnv(allowed=allowed, headless=headless) as env:
+        result = solve(env, policy, wordlist.load_answers())
+    words = [
+        {"board": i + 1, "answer": "", "solvedOnGuess": result.solved_on[i] or 0}
+        for i in range(len(result.solved_on))
+    ]
+    boards_solved = sum(1 for w in words if w["solvedOnGuess"])
+    record: dict[str, Any] = {
+        "seq": seq,
+        "date": date,
+        "mode": "browser",
+        "guesses": result.guesses,
+        "totalGuessesUsed": len(result.guesses),
+        "maxGuesses": 9,
+        "boardsSolved": boards_solved,
+        "won": boards_solved == len(words),
+        "words": words,
+    }
+    fallbacks = getattr(policy, "fallback_count", 0)
+    if fallbacks:
+        record["fallbacks"] = fallbacks
+    if metadata:
+        record.update(metadata)
+    return record
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Play Quordle games and log them.")
     parser.add_argument("-n", "--count", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
@@ -125,9 +162,30 @@ def main() -> None:
     parser.add_argument("--player", choices=["heuristic", "claude"], default="heuristic")
     parser.add_argument("--assist", choices=["none", "constraints", "candidates"], default="none")
     parser.add_argument("--model", default="claude-opus-5")
+    parser.add_argument("--env", choices=["sim", "browser"], default="sim")
+    parser.add_argument("--headed", action="store_true")
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
     args = parser.parse_args()
 
     factory, metadata = build_policy_factory(args.player, args.assist, args.model)
+
+    if args.env == "browser":
+        record = run_browser_game(
+            factory(),
+            seq=next_seq(args.out),
+            date=args.date,
+            allowed=wordlist.load_allowed(),
+            headless=not args.headed,
+            metadata={**metadata, "mode": "browser"},
+        )
+        append_jsonl(args.out, [record])
+        print(f"Appended 1 {args.player} browser game to {args.out}")
+        return
+
     records = run_many(
         args.count,
         seed=args.seed,
