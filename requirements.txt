@@ -1,1 +1,3 @@
+# Superseded by pyproject.toml. Install the project instead:
+#   pip install -e ".[dev]"
 matplotlib>=3.5
