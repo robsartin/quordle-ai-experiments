@@ -55,3 +55,6 @@
 - [16. Record games as append-only JSONL; render a static HTML dashboard](0016-jsonl-log-and-static-dashboard.md) — _Accepted_
   Records the established log and dashboard format so the new engine, solver, and runner conform to it rather than inventing a parallel format.
   Related: [12. Evaluate solvers by simulation](0012-simulation-first-evaluation.md)
+- [17. Let LLMs play as a policy, behind a provider abstraction](0017-llm-backed-policy-and-providers.md) — _Accepted_
+  An LLM player is just another policy; Claude (anthropic SDK, claude-opus-5) and Gemini (google-genai) sit behind an LLMProvider interface, with engine-assist level as an experiment axis.
+  Related: [15. Pluggable policy and objective](0015-pluggable-policy-and-objective.md), [13. Separate the solver from the environment](0013-solver-environment-separation.md)

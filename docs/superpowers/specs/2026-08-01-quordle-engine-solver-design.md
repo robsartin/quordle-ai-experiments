@@ -3,7 +3,7 @@
 - **Date:** 2026-08-01
 - **Status:** Proposed
 - **Issue:** [#1](https://github.com/robsartin/quordle-ai-experiments/issues/1)
-- **ADRs:** [0012](../../adr/0012-simulation-first-evaluation.md), [0013](../../adr/0013-solver-environment-separation.md), [0014](../../adr/0014-bundled-word-lists.md), [0015](../../adr/0015-pluggable-policy-and-objective.md), [0016](../../adr/0016-jsonl-log-and-static-dashboard.md)
+- **ADRs:** [0012](../../adr/0012-simulation-first-evaluation.md), [0013](../../adr/0013-solver-environment-separation.md), [0014](../../adr/0014-bundled-word-lists.md), [0015](../../adr/0015-pluggable-policy-and-objective.md), [0016](../../adr/0016-jsonl-log-and-static-dashboard.md), [0017](../../adr/0017-llm-backed-policy-and-providers.md)
 
 ## Goal
 
@@ -17,9 +17,12 @@ phases:
 - **Phase 2 — solver ideas.** A comparison harness that runs each strategy over a fixed
   answer sample and reports every objective side by side (minimize average guesses,
   guarantee-in-9, minimize maximum, minimize time-to-first-word, and a convex per-board cost).
+  This phase also introduces **LLM players** (Claude, then Gemini) as policies, so "model vs.
+  heuristic", "model vs. model", and "pure vs. assisted" are the same kind of comparison.
 
 Phase 1 is this project's build target; Phase 2 is a follow-up issue that reuses everything
-Phase 1 produces.
+Phase 1 produces. The LLM seam is *designed in* during Phase 1 (the `Policy` and provider
+interfaces) but the providers themselves are built in Phase 2.
 
 ## Non-goals (YAGNI)
 
@@ -27,6 +30,9 @@ Phase 1 produces.
 - No live web service / API. The dashboard stays a static file ([ADR 16](../../adr/0016-jsonl-log-and-static-dashboard.md)).
 - No tuning of the convex-metric constants now — that needs comparison data ([ADR 15](../../adr/0015-pluggable-policy-and-objective.md)).
 - No exhaustive "optimal Quordle" search. We compare *heuristic* policies, not solve the game.
+- No live LLM calls in Phase 1. LLM players ([ADR 17](../../adr/0017-llm-backed-policy-and-providers.md))
+  are Phase 2 — the `Policy`/`LLMProvider` seams are designed in now, the providers are built
+  later. Phase 1 stays fully offline and deterministic.
 
 ## Architecture — the seam
 
@@ -86,7 +92,10 @@ Built in this order (each is testable before the next exists — [ADR 2](../../a
 6. **`solver.py`** — drives a `Policy` against any `Environment`: maintains four `Board`
    candidate sets, loops submitting guesses and filtering until finished, records the game.
    *Depends on:* board, policy, and the environment interface (not `SimEngine` directly).
-7. **`runner.py`** — `run_game(answers, policy) -> GameRecord` and
+7. **`provider.py`** *(Phase 2)* — the `LLMProvider` interface plus per-model
+   implementations (Claude via `anthropic`, Gemini via `google-genai`) and a scripted
+   mock provider for tests. *Depends on:* the respective SDKs; the mock depends on nothing.
+8. **`runner.py`** — `run_game(answers, policy) -> GameRecord` and
    `run_many(n, seed, policy)`; samples four distinct answers with a seeded RNG, plays via
    `SimEngine`, and appends each `GameRecord` to the JSONL log. *Depends on:* engine, solver.
 
@@ -112,6 +121,38 @@ greedy expected-remaining**.
 
 This is a *good enough* solver to generate 100 sensible games; it is deliberately not the
 final word — swapping it is the whole point of [ADR 15](../../adr/0015-pluggable-policy-and-objective.md).
+
+## LLM players (Phase 2)
+
+An LLM plays by being a `Policy` — `LLMPolicy` — so the engine, solver loop, logging, and
+metrics are all reused ([ADR 17](../../adr/0017-llm-backed-policy-and-providers.md)). Each
+turn it renders the observable game state (past guesses + per-board green/yellow/grey
+feedback) into a prompt, asks a model for the next guess, and returns it to the unchanged
+solver loop.
+
+- **Provider abstraction:** `LLMProvider.next_guess(prompt) -> structured result`, one
+  implementation per model. **Claude** uses the official `anthropic` SDK, default model
+  `claude-opus-5`, with **structured outputs** so the guess is a validated field (a 5-letter
+  word, plus optional reasoning), not prose to parse. **Gemini** uses `google-genai` with its
+  native structured output. Each provider is its own module; no cross-provider shim.
+- **Assist level** (an `LLMPolicy` parameter, default `none`):
+  - `none` (**pure**) — the model sees only what a human sees.
+  - `constraints` — the engine also supplies derived per-board constraints (fixed greens,
+    required and excluded letters).
+  - `candidates` — the engine supplies the remaining candidate list per board, but only once
+    a board's candidate set is small enough (below a threshold); above it, falls back to
+    `constraints` to avoid dumping thousands of words into the prompt.
+
+  The level is recorded on the game and is an experiment axis in the comparison harness.
+- **Invalid-guess handling:** a guess that isn't a valid word is re-prompted up to a small
+  fixed number of times (with the reason); on exhaustion the policy submits a deterministic
+  valid fallback and flags it on the game record. A guess that merely contradicts prior
+  feedback is a legal Quordle move and is kept.
+- **Testing:** a scripted **mock provider** returns canned guesses, so `LLMPolicy` is
+  unit-tested with no network and CI stays offline. Real-provider calls are exercised only in
+  explicitly opt-in, network-gated runs.
+- **Cost/determinism:** each guess is one API call (a game up to 9, plus any re-prompts); the
+  game record logs the model, assist level, and token usage so runs are interpretable.
 
 ## Data format
 
@@ -163,10 +204,18 @@ Coverage meets the repo gate (line > 80%, branch > 65% — [ADR 10](../../adr/00
 3. `scoring` → `board` → `engine` → `solver` (against a test double) → `policy` baseline →
    `runner`, each TDD.
 4. Generate games to reach 100+; regenerate the dashboard; sanity-check the charts.
-5. (Phase 2, separate issue) objective functions + comparison harness + strategy variants.
+5. (Phase 2, separate issue) objective functions + comparison harness + strategy variants,
+   **plus** `provider.py` (mock → Claude → Gemini) and `LLMPolicy` with the assist-level
+   knob; add `anthropic` and `google-genai` as Phase-2 dependencies.
 
 ## Open questions
 
 - Exact opener sequence and how many fixed openers before greedy kicks in — settle during
   Phase 1 with quick experiments; not architecturally significant.
 - Final convex-metric form — deferred to Phase 2 with data ([ADR 15](../../adr/0015-pluggable-policy-and-objective.md)).
+- Whether some of the 100 logged games should be **Claude-played** rather than heuristic. The
+  phasing above keeps Phase 1 offline/deterministic and puts LLM play in Phase 2, but the seam
+  makes it a cheap reorder if we'd rather bring `LLMPolicy` forward and log real Claude games
+  toward the 100. Flagged for the review.
+- `candidates` assist-level threshold (how small a board's candidate set must be before we hand
+  the model the full list) — a tuning constant, settle empirically in Phase 2.
