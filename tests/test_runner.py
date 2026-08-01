@@ -2,8 +2,10 @@ import json
 import random
 
 from quordle import wordlist
+from quordle.engine import BoardState, TurnResult
 from quordle.policy import FixedOpenersThenGreedy
-from quordle.runner import append_jsonl, run_game, run_many, sample_answers
+from quordle.runner import append_jsonl, run_browser_game, run_game, run_many, sample_answers
+from quordle.scoring import score
 
 
 def test_sample_answers_distinct():
@@ -119,3 +121,101 @@ def test_env_choice_default_and_parse():
     assert parser.parse_args([]).env == "sim"
     assert parser.parse_args(["--env", "browser", "--headed"]).env == "browser"
     assert parser.parse_args(["--env", "browser", "--headed"]).headed is True
+
+
+class FakeBrowserEnv:
+    """A scripted stand-in for BrowserEnv -- no real browser -- implementing
+    the Environment protocol plus BrowserEnv's own context-manager methods,
+    so it can be injected via `run_browser_game`'s `env_factory`. Optionally
+    raises GuessRejected on a specific submit call, to exercise the
+    site-rejection recovery path (see runner._play_browser_game) offline.
+    """
+
+    def __init__(self, answer, allowed, max_guesses=9, reject_on_submit=None):
+        self._answer = answer.upper()
+        self.allowed = allowed
+        self.max_guesses = max_guesses
+        self.num_boards = 1
+        self._used = 0
+        self._solved_on = None
+        self._submit_calls = 0
+        self._reject_on_submit = reject_on_submit  # 1-based submit() call number
+
+    def remaining_guesses(self):
+        return self.max_guesses - self._used
+
+    def finished(self):
+        return self._used >= self.max_guesses or self._solved_on is not None
+
+    def submit(self, guess):
+        from quordle.browser.browser_env import GuessRejected
+
+        self._submit_calls += 1
+        if self._submit_calls == self._reject_on_submit:
+            raise GuessRejected(f"guess not accepted by the site: {guess!r}")
+        guess = guess.upper()
+        self._used += 1
+        pattern = score(guess, self._answer)
+        if guess == self._answer:
+            self._solved_on = self._used
+            return TurnResult(self._used, [BoardState(0, True, self._used, pattern)])
+        return TurnResult(self._used, [BoardState(0, False, None, pattern)])
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return None
+
+
+class FixedGuessPolicy:
+    def __init__(self, guesses):
+        self._guesses = guesses
+
+    def choose(self, boards, history, allowed, remaining):
+        return self._guesses[len(history)]
+
+
+def test_run_browser_game_record_shape_offline():
+    # Exercises run_browser_game's injectable env_factory (no real browser)
+    # to verify the mode:"browser" record shape without RUN_BROWSER_TESTS.
+    allowed = frozenset({"SLATE"})
+    env = FakeBrowserEnv("SLATE", allowed)
+    record = run_browser_game(
+        FixedGuessPolicy(["SLATE"]),
+        seq=5,
+        date="2026-08-01",
+        allowed=allowed,
+        headless=True,
+        metadata={"player": "heuristic"},
+        env_factory=lambda: env,
+    )
+    assert record["seq"] == 5 and record["mode"] == "browser" and record["maxGuesses"] == 9
+    assert record["totalGuessesUsed"] == len(record["guesses"]) == 1
+    assert record["guesses"] == ["SLATE"]
+    assert record["words"] == [{"board": 1, "answer": "", "solvedOnGuess": 1}]
+    assert record["boardsSolved"] == 1
+    assert record["won"] is True
+    assert record["player"] == "heuristic"
+    assert "endedEarly" not in record
+
+
+def test_run_browser_game_logs_partial_result_on_guess_rejected():
+    # The site rejects the 2nd guess; the game should end early with a
+    # (won=False) record reflecting the 1 accepted guess, not crash or lose
+    # that guess's progress.
+    allowed = frozenset({"SLATE", "SNAKE"})
+    env = FakeBrowserEnv("CRANE", allowed, reject_on_submit=2)
+    record = run_browser_game(
+        FixedGuessPolicy(["SLATE", "SNAKE"]),
+        seq=6,
+        date="2026-08-01",
+        allowed=allowed,
+        headless=True,
+        env_factory=lambda: env,
+    )
+    assert record["endedEarly"] is True
+    assert record["guesses"] == ["SLATE"]
+    assert record["totalGuessesUsed"] == 1
+    assert record["boardsSolved"] == 0
+    assert record["won"] is False

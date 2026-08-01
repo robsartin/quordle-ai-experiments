@@ -4,16 +4,39 @@ import argparse
 import json
 import random
 from collections.abc import Callable
-from typing import Any
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Protocol
 
 from quordle import wordlist
-from quordle.engine import SimEngine
+from quordle.board import Board
+from quordle.engine import Environment, SimEngine, TurnFeedback
 from quordle.llm_policy import Assist, LLMPolicy
 from quordle.policy import FixedOpenersThenGreedy, Policy
 from quordle.provider import ClaudeProvider
-from quordle.solver import solve
+from quordle.solver import SolveResult, solve
+
+if TYPE_CHECKING:
+    from quordle.browser.browser_env import GuessRejected
 
 DEFAULT_LOG = "data/quordle_games.jsonl"
+
+
+class _ContextEnv(Environment, Protocol):
+    """An Environment that's also its own context manager, like BrowserEnv.
+
+    `run_browser_game`'s injectable `env_factory` must return one of these
+    (not a bare Environment) so it can still be used as `with env_factory()
+    as env: ...` -- required for real browser cleanup, and satisfiable by a
+    trivial no-op `__enter__`/`__exit__` on a test double.
+    """
+
+    def __enter__(self) -> "_ContextEnv": ...
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None: ...
 
 
 def sample_answers(rng: random.Random, answers: tuple[str, ...], count: int = 4) -> list[str]:
@@ -116,6 +139,50 @@ def build_policy_factory(
     raise ValueError(f"unknown player: {player!r}")
 
 
+def _play_browser_game(
+    env: Environment, policy: Policy, answers: tuple[str, ...]
+) -> tuple[SolveResult, "GuessRejected | None"]:
+    """Mirror solver.solve()'s loop, but recover from the live site rejecting
+    a guess mid-game instead of losing all progress made so far.
+
+    solve() is deliberately environment-agnostic -- it must not import a
+    browser-specific exception type -- and its guesses/solved_on state is
+    local to its call frame, so it has no way to expose partial progress if
+    env.submit() raises. A site-side rejection is unique to BrowserEnv
+    (SimEngine can never raise it), so this loop, otherwise identical to
+    solve()'s, lives here instead: on GuessRejected it returns whatever
+    guesses/solved_on were recorded before the rejection, so the caller can
+    still log a (partial, won=False) record instead of losing the game --
+    and, for a real `--player claude` run, the API spend that produced those
+    accepted guesses.
+    """
+    from quordle.browser.browser_env import GuessRejected
+
+    full = frozenset(w.upper() for w in answers)
+    boards = [Board(full) for _ in range(env.num_boards)]
+    guesses: list[str] = []
+    history: list[TurnFeedback] = []
+    solved_on: list[int | None] = [None] * env.num_boards
+
+    while not env.finished():
+        guess = policy.choose(boards, history, env.allowed, env.remaining_guesses())
+        try:
+            result = env.submit(guess)
+        except GuessRejected as exc:
+            return SolveResult(guesses, solved_on), exc
+        guesses.append(guess)
+        history.append(TurnFeedback(guess, [state.pattern for state in result.boards]))
+        for i, state in enumerate(result.boards):
+            if state.solved:
+                if solved_on[i] is None:
+                    solved_on[i] = state.solved_on
+                boards[i] = Board(frozenset())
+            elif state.pattern is not None:
+                boards[i] = boards[i].filter(guess, state.pattern)
+
+    return SolveResult(guesses, solved_on), None
+
+
 def run_browser_game(
     policy: Policy,
     *,
@@ -124,11 +191,27 @@ def run_browser_game(
     allowed: frozenset[str],
     headless: bool,
     metadata: dict[str, str] | None = None,
+    env_factory: Callable[[], _ContextEnv] | None = None,
 ) -> dict[str, Any]:
-    from quordle.browser.browser_env import BrowserEnv
+    factory = env_factory
+    if factory is None:
 
-    with BrowserEnv(allowed=allowed, headless=headless) as env:
-        result = solve(env, policy, wordlist.load_answers())
+        def _default_env_factory() -> _ContextEnv:
+            from quordle.browser.browser_env import BrowserEnv
+
+            return BrowserEnv(allowed=allowed, headless=headless)
+
+        factory = _default_env_factory
+
+    with factory() as env:
+        result, rejected = _play_browser_game(env, policy, wordlist.load_answers())
+
+    if rejected is not None:
+        print(
+            f"Browser game ended early after {len(result.guesses)} guess(es) -- "
+            f"the site rejected a guess: {rejected}. Logging the partial result."
+        )
+
     words = [
         {"board": i + 1, "answer": "", "solvedOnGuess": result.solved_on[i] or 0}
         for i in range(len(result.solved_on))
@@ -145,6 +228,8 @@ def run_browser_game(
         "won": boards_solved == len(words),
         "words": words,
     }
+    if rejected is not None:
+        record["endedEarly"] = True
     fallbacks = getattr(policy, "fallback_count", 0)
     if fallbacks:
         record["fallbacks"] = fallbacks

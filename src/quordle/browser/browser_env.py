@@ -73,53 +73,72 @@ class BrowserEnv:
         used = scraper.count_played(boards)
         if used >= self.max_guesses:
             return True
-        return all(scraper._solved_on(board) is not None for board in boards)
+        return all(scraper.solved_on(board) is not None for board in boards)
 
     def submit(self, guess: str) -> TurnResult:
         guess = guess.upper()
         if len(guess) != 5 or guess not in self.allowed:
             raise ValueError(f"invalid guess: {guess!r}")
+        if self.finished():
+            raise RuntimeError("game already finished")
         before = scraper.count_played(self._read_boards())
         self._type_word(guess)
-        # Wait until board 1's SPECIFIC target row (0-based index `before`,
-        # the row about to be played) leaves the unplayed state, i.e. all 5
-        # of its tiles are neither "being guessed" nor "is a future guess"
-        # (so they're correct / different spot / incorrect). This proves the
-        # site accepted the word and that exact row advanced.
+        # Wait until the MAX played-row count across ALL boards reaches
+        # before+1 -- i.e. scraper.count_played(all boards) >= before+1.
         #
-        # An earlier version checked "any row not still being guessed" across
-        # the whole board, which is wrong: with 45 tiles/board and exactly
-        # one "being guessed" row at a time, the other 40 tiles are either
-        # already-revealed earlier rows or "is a future guess" rows -- the
-        # count of non-"being guessed" tiles is constant regardless of
-        # whether the new guess was accepted, so the wait resolved instantly
-        # every time and a truly-rejected guess never timed out (GuessRejected
-        # was unreachable). Keying off the specific target row's own state
-        # fixes both: it only flips once genuinely revealed, and stays
-        # unplayed forever if the site rejects the guess, so a rejection now
-        # correctly times out into GuessRejected. Written as a block function
-        # (rather than one long expression) to stay within the project's
-        # line-length limit.
+        # An earlier version only watched Game Board 1's target row. That
+        # broke as soon as board 1 was solved: solved boards freeze (stop
+        # getting new rows -- that's exactly why count_played() takes the
+        # MAX across boards, not board 1's count), so every later accepted
+        # guess targeted a board-1 row that would never play, timing out
+        # into a spurious GuessRejected and aborting the game mid-play. It
+        # also risked reading board 2-4 while they still lagged board 1,
+        # producing a parse_row ValueError on an unplayed row.
+        #
+        # Watching all boards' max fixes both: a rejected guess advances no
+        # board, so the max stays at `before` and we still time out
+        # correctly into GuessRejected; an accepted guess advances every
+        # still-active board, so the max reaches before+1 as soon as they've
+        # all revealed. "Played" is defined the same way scraper.tile_mark
+        # does (correct / different spot / incorrect), not by negating the
+        # (growing) list of "unplayed" reasons, so this doesn't bit-rot the
+        # way the board-1-only version did when a new unplayed label turned
+        # up ("is a future guess", then "never guessable" once solved).
         wait_js = """
-            (n) => {
-                const boxes = document.querySelectorAll(
-                    '[aria-label="Game Board 1"] .quordle-box'
-                );
-                const row = [...boxes].slice(n * 5, n * 5 + 5);
-                if (row.length < 5) return false;
-                return row.every((e) => {
-                    const label = e.getAttribute('aria-label') || '';
-                    return !label.includes('being guessed') && !label.includes('future guess');
-                });
+            ({ before, numBoards }) => {
+                const isPlayed = (label) =>
+                    !!label && (
+                        label.includes('is correct') ||
+                        label.includes('is in a different spot') ||
+                        label.includes('is incorrect')
+                    );
+                let maxPlayed = 0;
+                for (let b = 1; b <= numBoards; b++) {
+                    const boxes = document.querySelectorAll(
+                        `[aria-label="Game Board ${b}"] .quordle-box`
+                    );
+                    let played = 0;
+                    for (let r = 0; r * 5 < boxes.length; r++) {
+                        const row = [...boxes].slice(r * 5, r * 5 + 5);
+                        const rowPlayed = row.length === 5 && row.every(
+                            (e) => isPlayed(e.getAttribute('aria-label'))
+                        );
+                        if (rowPlayed) {
+                            played++;
+                        }
+                    }
+                    maxPlayed = Math.max(maxPlayed, played);
+                }
+                return maxPlayed >= before + 1;
             }
         """
         try:
             self._page.wait_for_function(
                 wait_js,
-                arg=before,
+                arg={"before": before, "numBoards": self.num_boards},
                 timeout=REVEAL_TIMEOUT_MS,
             )
-        except PlaywrightTimeoutError as exc:  # row never advanced -> rejected word
+        except PlaywrightTimeoutError as exc:  # no board advanced -> rejected word
             raise GuessRejected(f"guess not accepted by the site: {guess!r}") from exc
         boards = self._read_boards()
         used = scraper.count_played(boards)
