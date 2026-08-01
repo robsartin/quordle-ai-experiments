@@ -28,15 +28,33 @@ packages = ["src/quordle"]
 src = ["src", "tests"]
 line-length = 100
 extend-exclude = [
-    "quordle_stats.py",
     "docs/superpowers/plans/2026-08-01-phase1-engine-heuristic-solver.md",
 ]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# dashboard.py embeds a literal HTML/CSS template in an f-string; two CSS rule
+# lines exceed line-length. Wrapping them would insert real newlines into the
+# generated <style> block, changing the dashboard's output HTML, so E501 is
+# ignored for this file only rather than reformatting the template content.
+"src/quordle/dashboard.py" = ["E501"]
+
 [tool.mypy]
-python_version = "3.11"
+# python_version is 3.12, not the project floor of 3.11: numpy's bundled
+# stubs (pulled in transitively via matplotlib, used only by
+# quordle.dashboard) use the PEP 695 `type` statement, which mypy rejects as
+# a syntax error when parsing under python_version = "3.11" -- this blocks
+# mypy entirely (it can't even reach our own files), not just a strictness
+# flag, so it can't be fixed with a per-module override: mypy refuses
+# per-module `python_version` overrides ("Per-module sections should only
+# specify per-module flags"), and per-module `follow_imports = "skip"` for
+# numpy does not avoid the parse error either (verified). The dev
+# environment already runs Python 3.12, and none of our own code uses
+# 3.12-only syntax, so this only changes what third-party stub syntax mypy
+# is willing to parse.
+python_version = "3.12"
 packages = ["quordle"]
 mypy_path = "src"
 strict = true
