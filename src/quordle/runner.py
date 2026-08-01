@@ -8,7 +8,9 @@ from typing import Any
 
 from quordle import wordlist
 from quordle.engine import SimEngine
+from quordle.llm_policy import Assist, LLMPolicy
 from quordle.policy import FixedOpenersThenGreedy, Policy
+from quordle.provider import ClaudeProvider
 from quordle.solver import solve
 
 DEFAULT_LOG = "data/quordle_games.jsonl"
@@ -99,26 +101,45 @@ def next_seq(path: str) -> int:
         return 1
 
 
+def build_policy_factory(
+    player: str, assist: str, model: str
+) -> tuple[Callable[[], Policy], dict[str, str]]:
+    if player == "heuristic":
+        return FixedOpenersThenGreedy, {"player": "heuristic"}
+    if player == "claude":
+        assist_level = Assist(assist)
+
+        def factory() -> Policy:
+            return LLMPolicy(ClaudeProvider(model=model), assist=assist_level)
+
+        return factory, {"player": "claude", "model": model, "assist": assist, "mode": "claude"}
+    raise ValueError(f"unknown player: {player!r}")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Simulate Quordle games and log them.")
+    parser = argparse.ArgumentParser(description="Play Quordle games and log them.")
     parser.add_argument("-n", "--count", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", default=DEFAULT_LOG)
     parser.add_argument("--date", default="2026-08-01")
+    parser.add_argument("--player", choices=["heuristic", "claude"], default="heuristic")
+    parser.add_argument("--assist", choices=["none", "constraints", "candidates"], default="none")
+    parser.add_argument("--model", default="claude-opus-5")
     args = parser.parse_args()
 
+    factory, metadata = build_policy_factory(args.player, args.assist, args.model)
     records = run_many(
         args.count,
         seed=args.seed,
-        policy_factory=FixedOpenersThenGreedy,
+        policy_factory=factory,
         answers=wordlist.load_answers(),
         allowed=wordlist.load_allowed(),
         start_seq=next_seq(args.out),
         date=args.date,
-        metadata={"player": "heuristic"},
+        metadata=metadata,
     )
     append_jsonl(args.out, records)
-    print(f"Appended {len(records)} games to {args.out}")
+    print(f"Appended {len(records)} {args.player} games to {args.out}")
 
 
 if __name__ == "__main__":

@@ -71,3 +71,24 @@ def test_append_jsonl_round_trips(tmp_path):
     append_jsonl(str(path), records)
     lines = path.read_text().splitlines()
     assert len(lines) == 2 and json.loads(lines[0])["seq"] == 1
+
+
+def test_build_policy_factory_heuristic():
+    from quordle.runner import build_policy_factory
+
+    factory, metadata = build_policy_factory("heuristic", "none", "claude-opus-5")
+    policy = factory()
+    assert metadata["player"] == "heuristic"
+    assert hasattr(policy, "choose")
+
+
+def test_build_policy_factory_claude_metadata():
+    from quordle.runner import build_policy_factory
+
+    _factory, metadata = build_policy_factory("claude", "constraints", "claude-opus-5")
+    assert metadata == {
+        "player": "claude",
+        "model": "claude-opus-5",
+        "assist": "constraints",
+        "mode": "claude",
+    }
