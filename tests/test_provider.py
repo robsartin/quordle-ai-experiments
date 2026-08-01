@@ -25,3 +25,12 @@ def test_claude_provider_returns_a_five_letter_word():
 
     resp = ClaudeProvider().next_guess("Reply with any common 5-letter English word as your guess.")
     assert len(resp.guess.strip()) == 5
+
+
+def test_claude_provider_default_max_tokens_is_generous():
+    from quordle.provider import ClaudeProvider
+
+    # opus-5 thinks by default; the token budget must leave room for the
+    # structured output after thinking. Construct offline (no network on ctor).
+    provider = ClaudeProvider()
+    assert provider._max_tokens >= 16000
