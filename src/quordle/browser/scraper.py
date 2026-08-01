@@ -7,6 +7,8 @@ from quordle.scoring import Mark, Pattern
 def tile_mark(label: str) -> Mark | None:
     if "is being guessed" in label:
         return None
+    if "is a future guess" in label:
+        return None
     if "is correct" in label:
         return Mark.GREEN
     if "is in a different spot" in label:

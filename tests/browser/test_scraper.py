@@ -21,6 +21,7 @@ CURIO_B4 = [
     "'O' (letter 5) is incorrect",
 ]  # -> . . G G .
 BLANK = [f"'Blank' (letter {i}) is being guessed" for i in range(1, 6)]
+FUTURE = [f"'Blank' (letter {i}) is a future guess" for i in range(1, 6)]
 ALL_CORRECT = [f"'S' (letter {i}) is correct" for i in range(1, 6)]  # a solved row
 
 
@@ -29,6 +30,10 @@ def test_tile_mark_all_three_and_blank() -> None:
     assert scraper.tile_mark("'C' (letter 1) is in a different spot") is Mark.YELLOW
     assert scraper.tile_mark("'U' (letter 2) is incorrect") is Mark.GREY
     assert scraper.tile_mark("'Blank' (letter 1) is being guessed") is None
+    # Rows further down the board than the one currently being typed use a
+    # distinct "future guess" label on the live site (found via
+    # RUN_BROWSER_TESTS=1 live validation); these are also unplayed.
+    assert scraper.tile_mark("'Blank' (letter 1) is a future guess") is None
 
 
 def test_parse_row_real_rows() -> None:
@@ -44,6 +49,7 @@ def test_parse_row_rejects_unplayed() -> None:
 def test_row_played() -> None:
     assert scraper.row_played(CURIO_B2) is True
     assert scraper.row_played(BLANK) is False
+    assert scraper.row_played(FUTURE) is False
 
 
 def test_count_played_is_max_across_boards() -> None:

@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib>=3.5",
     "anthropic>=0.40",
     "pydantic>=2",
+    "playwright>=1.40",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,7 @@ src = ["src", "tests"]
 line-length = 100
 extend-exclude = [
     "docs/superpowers/plans/2026-08-01-phase1-engine-heuristic-solver.md",
+    "docs/superpowers/plans/2026-08-01-browserenv.md",
 ]
 
 [tool.ruff.lint]
@@ -66,6 +68,11 @@ testpaths = ["tests"]
 [tool.coverage.run]
 branch = true
 source = ["quordle"]
+# browser_env.py is Playwright glue driving a real browser against
+# beta.quordle.com; it is verified by the gated live test
+# (tests/browser/test_browser_env.py, RUN_BROWSER_TESTS=1), not by the
+# offline unit-test suite, so it is omitted from the coverage gate here.
+omit = ["src/quordle/browser/browser_env.py"]
 
 [tool.coverage.report]
 fail_under = 80
