@@ -131,7 +131,15 @@ class FakeBrowserEnv:
     site-rejection recovery path (see runner._play_browser_game) offline.
     """
 
-    def __init__(self, answer, allowed, max_guesses=9, reject_on_submit=None):
+    def __init__(
+        self,
+        answer,
+        allowed,
+        max_guesses=9,
+        reject_on_submit=None,
+        fail_on_game=None,
+        new_game_fails=False,
+    ):
         self._answer = answer.upper()
         self.allowed = allowed
         self.max_guesses = max_guesses
@@ -140,6 +148,9 @@ class FakeBrowserEnv:
         self._solved_on = None
         self._submit_calls = 0
         self._reject_on_submit = reject_on_submit  # 1-based submit() call number
+        self._game = 1
+        self._fail_on_game = fail_on_game  # 1-based game index whose submit raises
+        self._new_game_fails = new_game_fails
 
     def remaining_guesses(self):
         return self.max_guesses - self._used
@@ -150,6 +161,8 @@ class FakeBrowserEnv:
     def submit(self, guess):
         from quordle.browser.browser_env import GuessRejected
 
+        if self._game == self._fail_on_game:
+            raise RuntimeError(f"simulated browser failure on game {self._game}")
         self._submit_calls += 1
         if self._submit_calls == self._reject_on_submit:
             raise GuessRejected(f"guess not accepted by the site: {guess!r}")
@@ -163,6 +176,14 @@ class FakeBrowserEnv:
 
     def read_answers(self):
         return [self._answer] if self.finished() else []
+
+    def new_game(self):
+        if self._new_game_fails:
+            raise RuntimeError("cannot start new game")
+        self._used = 0
+        self._solved_on = None
+        self._submit_calls = 0
+        self._game += 1
 
     def __enter__(self):
         return self
@@ -261,6 +282,61 @@ def test_browser_game_ends_gracefully_on_api_timeout():
     assert record["totalGuessesUsed"] == 1
     assert record["boardsSolved"] == 0
     assert record["won"] is False
+
+
+def test_run_browser_games_plays_count_games_and_logs_answers():
+    from quordle.runner import run_browser_games
+
+    allowed = frozenset({"SLATE"})
+    env = FakeBrowserEnv("SLATE", allowed)
+    records = run_browser_games(
+        lambda: FixedGuessPolicy(["SLATE"]),
+        count=3,
+        start_seq=10,
+        date="2026-08-02",
+        allowed=allowed,
+        headless=True,
+        env_factory=lambda: env,
+    )
+    assert [r["seq"] for r in records] == [10, 11, 12]
+    assert all(r["mode"] == "browser" and r["won"] is True for r in records)
+    assert all(r["words"][0]["answer"] == "SLATE" for r in records)
+
+
+def test_run_browser_games_continues_after_a_game_fails():
+    from quordle.runner import run_browser_games
+
+    allowed = frozenset({"SLATE"})
+    env = FakeBrowserEnv("SLATE", allowed, fail_on_game=2)
+    records = run_browser_games(
+        lambda: FixedGuessPolicy(["SLATE"]),
+        count=3,
+        start_seq=1,
+        date="2026-08-02",
+        allowed=allowed,
+        headless=True,
+        env_factory=lambda: env,
+    )
+    # game 2 raised mid-play -> skipped; games 1 and 3 still logged
+    assert [r["seq"] for r in records] == [1, 3]
+
+
+def test_run_browser_games_ends_batch_when_new_game_cannot_reset():
+    from quordle.runner import run_browser_games
+
+    allowed = frozenset({"SLATE"})
+    env = FakeBrowserEnv("SLATE", allowed, new_game_fails=True)
+    records = run_browser_games(
+        lambda: FixedGuessPolicy(["SLATE"]),
+        count=3,
+        start_seq=1,
+        date="2026-08-02",
+        allowed=allowed,
+        headless=True,
+        env_factory=lambda: env,
+    )
+    # game 1 plays; new_game() for game 2 fails -> batch ends gracefully
+    assert [r["seq"] for r in records] == [1]
 
 
 def test_run_browser_game_logs_partial_result_on_guess_rejected():
