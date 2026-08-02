@@ -28,11 +28,13 @@ class MockProvider:
         return GuessResponse(reasoning=self._reasoning, guess=guess)
 
 
-# A single stalled TLS read must not freeze an unattended run: the anthropic
-# SDK's default read timeout is 600s, so one wedged connection hung overnight
-# runs for the whole night. A short, finite timeout makes a stall fail fast so
-# the SDK retries on a fresh connection (a healthy call returns in ~3s).
-_REQUEST_TIMEOUT_S = 60.0
+# Bound how long one call may block so a wedged TLS connection can't freeze an
+# unattended run (the SDK's default read timeout is 600s). But real mid-game
+# calls with default extended thinking measure ~63-75s, so the bound must sit
+# well above that or it kills legit calls (a too-low 60s did exactly that);
+# 150s gives ~2x margin over a real call while still failing a true stall in
+# bounded time for the graceful-recovery path to catch.
+_REQUEST_TIMEOUT_S = 150.0
 
 
 class ClaudeProvider:

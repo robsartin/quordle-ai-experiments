@@ -36,17 +36,17 @@ def test_claude_provider_default_max_tokens_is_generous():
     assert provider._max_tokens >= 16000
 
 
-def test_claude_provider_read_timeout_is_bounded():
+def test_claude_provider_read_timeout_covers_thinking_but_is_bounded():
     from quordle.provider import ClaudeProvider
 
-    # A stalled TLS read must not hang an unattended run for the SDK's 600s
-    # default read timeout (which froze overnight runs). The provider sets a
-    # short, finite request timeout so a stall fails fast and the SDK retries
-    # on a fresh connection. Construct offline (no network on ctor).
+    # Real mid-game calls with default extended thinking take ~70s, so the
+    # timeout must comfortably exceed that (or it kills legit calls), yet stay
+    # well under the SDK's 600s default so a true stall still fails in bounded
+    # time and is caught by the graceful-recovery path. Offline (no network).
     provider = ClaudeProvider()
     t = provider._client.timeout
     read = t if isinstance(t, (int, float)) else t.read
-    assert read is not None and read <= 120
+    assert read is not None and 120 <= read <= 300
 
 
 def test_claude_provider_prefers_ipv4():
