@@ -35,7 +35,7 @@ Confirmed on `beta.quordle.com` Practice by playing a full game to game-over via
 ## Architecture
 
 ```
-run_browser_games(policy_factory, count=N)
+run_browser_games(policy_factory, count=N)   # N from the existing --count/-n arg
   └─ one BrowserEnv (one Chromium)
        for g in 1..N:
          if g > 1: env.new_game()            # fresh puzzle, same browser
@@ -43,7 +43,8 @@ run_browser_games(policy_factory, count=N)
          answers = env.read_answers()        # [] if we ended early
          record  = build record + words[i].answer = answers[i] when available
          append record
-       (per-game try/except: one game's failure never aborts the batch)
+       (per-game try/except: one game's failure never aborts the batch;
+        if new_game() cannot reach a fresh puzzle, end the batch gracefully)
   env.close()   # once, at the end
 ```
 
@@ -53,31 +54,38 @@ run_browser_games(policy_factory, count=N)
 ## Components
 
 1. **`BrowserEnv.new_game()`** — start a fresh practice game in the current page.
-   - Primary: click `button[aria-label="New Practice Game"]`, then wait until the board has
-     0 played rows (reuse the played-row logic already in `submit`'s reveal-wait / `scraper`).
-   - Fallback (prior game ended early → no results modal, so the button is absent):
-     `page.goto(QUORDLE_URL)` + click Practice + wait for the empty board.
-     **Implementation step-1 scout:** confirm whether reload yields a *fresh* puzzle or
-     *resumes* the partial one (localStorage). If it resumes, use an alternative reset (e.g.
-     the results modal isn't required for the button — check whether "New Practice Game" is
-     reachable another way, or force game-over). Document what was found.
+   - Click `button[aria-label="New Practice Game"]`, then wait until the board has 0 played
+     rows (reuse the played-row logic already in `submit`'s reveal-wait / `scraper`).
+   - Precondition: the game is over on the site (the button lives in the results modal). If
+     the button isn't present, raise a clear error (`RuntimeError`); the loop catches it and
+     ends the batch gracefully (see component 3).
+   - **Deferred (per decision 2026-08-02):** the early-end case — how to reach a fresh game
+     after *we* ended a game early (no results modal, so no button) — is left for a follow-up
+     once we've observed real early-end behavior (reload-vs-resume of the practice page is
+     unknown, and early ends are rarer now with the 150s timeout). For #9, `new_game()`
+     covers only the confirmed game-over path; an early end simply ends the batch.
 
 2. **`BrowserEnv.read_answers() -> list[str]`** — at game-over, read the four
    `[aria-label="Link to word definition"]` innerTexts, uppercased, in board order. Returns
    `[]` when the site is not at game-over (e.g. our early end), so answers stay blank there.
    Pure-ish DOM read; no solver coupling.
 
-3. **`runner.run_browser_games(policy_factory, *, count, seq, date, allowed, headless, metadata)`**
-   — opens one `BrowserEnv` via the same injectable `env_factory` seam used by
-   `run_browser_game` (so it's testable offline), plays `count` games as above, and returns
-   the list of records. `seq` increments per game. A fresh `policy_factory()` per game gives a
-   clean policy (e.g. `fallback_count`). Each game is wrapped so an unexpected error logs a
-   minimal record (or is skipped with a logged note) and the loop continues.
+3. **`runner.run_browser_games(policy_factory, *, count, start_seq, date, allowed, headless, metadata)`**
+   — opens **one** `BrowserEnv` (the injectable `env_factory` seam is called once, so it's
+   testable offline), plays `count` games as above, and returns the list of records. `seq`
+   increments per game from `start_seq`. A fresh `policy_factory()` per game gives a clean
+   policy (e.g. `fallback_count`). Each game is wrapped so an unexpected error, or a
+   `new_game()` that can't reach a fresh puzzle, logs what it has and **ends the batch
+   gracefully** with the games completed so far (never crashes the process). `count == 1`
+   plays exactly one game and never calls `new_game()` — the same behavior as today's
+   `run_browser_game`, which becomes a thin `count=1` wrapper (record-building shared).
 
-4. **CLI (`runner.build_arg_parser` / `main`)** — add `--games N` (default `1`). With
-   `--env browser` and `N > 1`, dispatch to `run_browser_games`; `N == 1` keeps today's
-   `run_browser_game` path byte-for-byte. `--games` is ignored for `--env sim` (which already
-   has `run_many`), or wired to it later — out of scope here.
+4. **CLI (`runner.build_arg_parser` / `main`)** — **no new flag**: the existing `--count`/`-n`
+   (number of games) becomes the games count for **both** modes. Sim already honors it (via
+   `run_many`); the browser path, which currently ignores `--count` and hardcodes one game,
+   now dispatches to `run_browser_games(count=args.count, ...)`. `--seed` stays sim-only (it
+   selects sim answers; the live site supplies its own). Default `--count` (10) is unchanged;
+   a browser run with no `--count` now plays 10 games — pass `--count 1` for a single game.
 
 ## Logging
 
@@ -103,22 +111,25 @@ board was actually solved and feeds the objective-comparison harness ([#6](https
 ## Mikado build sequence (green after each step)
 
 1. `read_answers` + fixture/fake test — gate green.
-2. `new_game()` (button primary; live gated test) + early-end fallback (after step-1 scout) — green.
-3. `run_browser_games` loop against the extended `FakeBrowserEnv` — green.
-4. `--games N` CLI wiring; `N==1` path unchanged — green.
-5. Live 2–3-game validation (`--games 3`), confirm answers logged and one browser reused;
-   regenerate the dashboard.
+2. `new_game()` (button path; live gated test) — green.
+3. `run_browser_games` loop (graceful batch-end) against the extended `FakeBrowserEnv` — green.
+4. `--count` honored by the browser path; sim unchanged — green.
+5. Live 2–3-game validation (`--count 3 --env browser`), confirm answers logged and one
+   browser reused; regenerate the dashboard.
 
 ## Non-goals (YAGNI)
 
 - No heuristic-over-browser multi-game (Claude is the browser player; heuristic stays on
   `SimEngine` with `run_many`).
 - No parallel browsers / concurrency — one browser, sequential games.
-- No retry-the-same-puzzle after an early end — we just move to a fresh game.
+- **No early-end `new_game()` fallback** — deferred (see component 1); an early-ended game
+  ends the batch. To be revisited as a follow-up once real early-end behavior is observed.
 - No answer-list reconciliation beyond logging the scraped answer string.
 
-## Open questions
+## Open questions / follow-ups
 
-- Reload-vs-resume semantics of the practice page (settles the `new_game()` early-end
-  fallback) — step-1 scout.
-- Confirm the four definition links are in board order 1–4 — step-1/step-2 scout.
+- **Early-end `new_game()` fallback** — deferred follow-up: how to reach a fresh practice
+  game after we end a game early (reload-vs-resume of the practice page is unknown). File
+  once we've seen real early-end behavior.
+- Confirm the four definition links are in board order 1–4 — settle in implementation
+  (step 1/2 live check).
