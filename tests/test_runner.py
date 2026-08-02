@@ -200,6 +200,24 @@ def test_run_browser_game_record_shape_offline():
     assert "endedEarly" not in record
 
 
+def test_browser_game_prints_per_guess_progress(capsys):
+    # Unattended runs must show live progress, not silence. _play_browser_game
+    # prints one line per accepted guess (browser-only, so sim runs stay quiet).
+    allowed = frozenset({"CRANE", "SLATE"})
+    env = FakeBrowserEnv("SLATE", allowed)
+    run_browser_game(
+        FixedGuessPolicy(["CRANE", "SLATE"]),
+        seq=7,
+        date="2026-08-02",
+        allowed=allowed,
+        headless=True,
+        env_factory=lambda: env,
+    )
+    out = capsys.readouterr().out
+    assert "guess 1/9: CRANE -> 0/1 boards solved" in out
+    assert "guess 2/9: SLATE -> 1/1 boards solved" in out
+
+
 def test_run_browser_game_logs_partial_result_on_guess_rejected():
     # The site rejects the 2nd guess; the game should end early with a
     # (won=False) record reflecting the 1 accepted guess, not crash or lose
