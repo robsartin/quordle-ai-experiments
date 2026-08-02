@@ -93,6 +93,20 @@ def test_append_jsonl_round_trips(tmp_path):
     assert len(lines) == 2 and json.loads(lines[0])["seq"] == 1
 
 
+def test_append_jsonl_backs_up_existing_log(tmp_path):
+    # Durability (issue #11): the game log is gitignored and irreplaceable, and
+    # was once externally truncated to empty. Each append first snapshots the
+    # existing non-empty log to <path>.bak, leaving one recovery point.
+    path = tmp_path / "games.jsonl"
+    bak = tmp_path / "games.jsonl.bak"
+    append_jsonl(str(path), [{"seq": 1}])  # file was absent -> nothing to back up
+    assert not bak.exists()
+    append_jsonl(str(path), [{"seq": 2}])  # existing 1-line log snapshotted first
+    assert bak.exists()
+    assert bak.read_text().strip() == json.dumps({"seq": 1})  # backup = pre-append state
+    assert len(path.read_text().splitlines()) == 2  # main log still fully appended
+
+
 def test_build_policy_factory_heuristic():
     from quordle.runner import build_policy_factory
 

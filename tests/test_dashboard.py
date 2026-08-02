@@ -15,6 +15,7 @@ from quordle.dashboard import (
     load,
     main,
     save_png,
+    solve_position_counts,
     summary,
 )
 
@@ -57,6 +58,26 @@ GAME_LOSS = {
 }
 
 SAMPLE_GAMES = [GAME_WIN, GAME_LOSS]
+
+
+def test_solve_position_counts():
+    # The "When individual boards fall" chart data. Two sample games = 8 boards
+    # solved on guesses [3,5,4,6] and [7,3,6,0] (the last a never-solved board).
+    # Confirms the chart's aggregation is correct (issue #11: the reported
+    # "bad data" was a truncated log, not a chart-math bug).
+    xs, ys, labels = solve_position_counts(SAMPLE_GAMES)
+    assert xs == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert labels == ["1", "2", "3", "4", "5", "6", "7", "8", "9", "X"]
+    assert ys == [0, 0, 2, 1, 1, 2, 1, 0, 0, 1]
+    assert sum(ys) == 8  # 4 boards x 2 games, every board accounted for
+
+
+def test_solve_position_counts_no_unsolved_bucket_when_all_solved():
+    # When no board is ever unsolved, there is no trailing "X" bucket.
+    xs, ys, labels = solve_position_counts([GAME_WIN])
+    assert "X" not in labels
+    assert xs == list(range(1, 10)) and len(ys) == 9
+    assert sum(ys) == 4  # GAME_WIN solved all four boards
 
 
 @pytest.fixture(scope="module")

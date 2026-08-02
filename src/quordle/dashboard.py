@@ -125,7 +125,15 @@ def chart_guess_distribution(games: list[Game]) -> str:
     return fig_to_b64(fig)
 
 
-def chart_solve_position(games: list[Game]) -> str:
+def solve_position_counts(games: list[Game]) -> tuple[list[int], list[int], list[str]]:
+    """Boards solved at each guess position (1..maxGuesses), with a trailing
+    'X' bucket for boards never solved. Pure aggregation behind
+    chart_solve_position, extracted so the chart's data is unit-testable
+    without rendering (issue #11).
+
+    Returns (xs, ys, labels): xs are bar positions, ys the board counts, labels
+    the x-axis text ('1'..'N', then 'X' when any board went unsolved).
+    """
     maxg = max(g["maxGuesses"] for g in games)
     solved: Counter[int] = Counter()
     unsolved = 0
@@ -143,6 +151,11 @@ def chart_solve_position(games: list[Game]) -> str:
         xs.append(maxg + 1)
         ys.append(unsolved)
         labels.append("X")
+    return xs, ys, labels
+
+
+def chart_solve_position(games: list[Game]) -> str:
+    xs, ys, labels = solve_position_counts(games)
     fig, ax = plt.subplots(figsize=(6.6, 3.4))
     bars = ax.bar(
         range(len(xs)),

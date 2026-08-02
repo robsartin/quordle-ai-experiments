@@ -1,5 +1,6 @@
 # Game logs — kept locally in data/, never committed
 data/*.jsonl
+data/*.jsonl.bak
 !data/*.sample.jsonl
 
 # Generated output
