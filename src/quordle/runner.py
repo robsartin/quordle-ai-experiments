@@ -179,6 +179,15 @@ def _play_browser_game(
                 boards[i] = Board(frozenset())
             elif state.pattern is not None:
                 boards[i] = boards[i].filter(guess, state.pattern)
+        # Per-guess progress so unattended browser runs show they are alive
+        # (a stalled turn is otherwise silent). Browser-only -- sim runs, which
+        # loop over many games, stay quiet via their own summary line.
+        solved_count = sum(1 for s in solved_on if s is not None)
+        print(
+            f"  guess {len(guesses)}/{env.max_guesses}: {guess} -> "
+            f"{solved_count}/{env.num_boards} boards solved",
+            flush=True,
+        )
 
     return SolveResult(guesses, solved_on), None
 
