@@ -164,6 +164,7 @@ class FakeBrowserEnv:
         self._submit_calls = 0
         self._reject_on_submit = reject_on_submit  # 1-based submit() call number
         self._reject_words = reject_words
+        self.reject_count = 0  # how many submits the "site" refused (retry observability)
         self._game = 1
         self._fail_on_game = fail_on_game  # 1-based game index whose submit raises
         self._new_game_fails = new_game_fails
@@ -178,6 +179,7 @@ class FakeBrowserEnv:
         from quordle.browser.browser_env import GuessRejected
 
         if guess.upper() in self._reject_words:
+            self.reject_count += 1
             raise GuessRejected(f"guess not accepted by the site: {guess!r}")
         if self._game == self._fail_on_game:
             raise RuntimeError(f"simulated browser failure on game {self._game}")
@@ -359,12 +361,13 @@ def test_run_browser_games_ends_batch_when_new_game_cannot_reset():
     assert [r["seq"] for r in records] == [1]
 
 
-def test_run_browser_game_logs_partial_result_on_guess_rejected():
+def test_run_browser_game_exhausts_retries_then_logs_partial():
     # The site ALWAYS rejects SNAKE; FixedGuessPolicy keeps re-proposing it for
     # that turn (it ignores `excluded`), so every retry is also rejected and
-    # the turn's retries exhaust. The game should end early with a (won=False)
-    # record reflecting the 1 accepted guess, not crash or lose that guess's
-    # progress.
+    # the turn's retries exhaust. The game ends early with a (won=False) record
+    # reflecting the 1 accepted guess, not crashing or losing that progress.
+    from quordle.runner import MAX_REJECT_RETRIES
+
     allowed = frozenset({"SLATE", "SNAKE"})
     env = FakeBrowserEnv("CRANE", allowed, reject_words={"SNAKE"})
     record = run_browser_game(
@@ -380,6 +383,11 @@ def test_run_browser_game_logs_partial_result_on_guess_rejected():
     assert record["totalGuessesUsed"] == 1
     assert record["boardsSolved"] == 0
     assert record["won"] is False
+    # The rejected turn was actually RETRIED to exhaustion, not given up on the
+    # first rejection: the site refused SNAKE MAX_REJECT_RETRIES + 1 times.
+    # (Without the retry loop this would be 1 -- so this assertion is what makes
+    # the test verify the feature rather than pass vacuously.)
+    assert env.reject_count == MAX_REJECT_RETRIES + 1
 
 
 class RetryPolicy:

@@ -48,9 +48,9 @@ class FixedOpenersThenGreedy:
 
         active = [b for b in boards if b.candidates]
         pinned = sorted(
-            next(iter(b.candidates))
+            w
             for b in active
-            if len(b.candidates) == 1 and next(iter(b.candidates)) not in excluded
+            if len(b.candidates) == 1 and (w := next(iter(b.candidates))) not in excluded
         )
         if pinned:
             return pinned[0]

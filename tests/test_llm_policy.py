@@ -30,6 +30,19 @@ def test_falls_back_after_exhausting_retries():
     assert policy.fallback_count == 1
 
 
+def test_fallback_returns_from_allowed_when_everything_excluded():
+    # Degenerate: the site has refused the only allowed word. The exclude-aware
+    # fallback still returns a word from `allowed` (rather than crashing on an
+    # empty pool) -- exercises _fallback's final sorted(allowed) branch.
+    policy = LLMPolicy(MockProvider(["CRANE"]), max_retries=1)
+    boards = [Board(frozenset({"CRANE"}))]
+    guess = policy.choose(
+        boards, [], frozenset({"CRANE"}), remaining=9, excluded=frozenset({"CRANE"})
+    )
+    assert guess == "CRANE"
+    assert policy.fallback_count == 1
+
+
 def test_excluded_word_is_never_returned_even_if_provider_proposes_it():
     # The site rejected CRANE; even though the provider proposes it again
     # (e.g. it hasn't learned better), choose() must reprompt/fall through
