@@ -26,6 +26,48 @@ def test_browser_env_plays_two_guesses():
         assert env.remaining_guesses() == 7
 
 
+def test_browser_env_reads_answers_at_game_over():
+    from quordle import wordlist
+    from quordle.browser.browser_env import BrowserEnv, GuessRejected
+
+    allowed = wordlist.load_allowed()
+    guesses = ["SLATE", "CRANE", "MOUND", "PLUCK", "BEFIT", "WORDY", "GHOST", "JUMPY", "VEXED"]
+    with BrowserEnv(allowed=allowed, headless=True) as env:
+        i = 0
+        while not env.finished() and i < len(guesses):
+            try:
+                env.submit(guesses[i])
+            except GuessRejected:
+                pass
+            i += 1
+        assert env.finished()
+        answers = env.read_answers()
+    assert len(answers) == 4
+    assert all(len(a) == 5 and a.isalpha() and a == a.upper() for a in answers)
+
+
+def test_browser_env_new_game_resets_board():
+    from quordle import wordlist
+    from quordle.browser import scraper
+    from quordle.browser.browser_env import BrowserEnv, GuessRejected
+
+    allowed = wordlist.load_allowed()
+    guesses = ["SLATE", "CRANE", "MOUND", "PLUCK", "BEFIT", "WORDY", "GHOST", "JUMPY", "VEXED"]
+    with BrowserEnv(allowed=allowed, headless=True) as env:
+        i = 0
+        while not env.finished() and i < len(guesses):
+            try:
+                env.submit(guesses[i])
+            except GuessRejected:
+                pass
+            i += 1
+        assert env.finished()
+        env.new_game()
+        assert scraper.count_played(env._read_boards()) == 0
+        env.submit("SLATE")
+        assert scraper.count_played(env._read_boards()) == 1
+
+
 def test_browser_env_raises_guess_rejected_for_word_the_site_refuses():
     from quordle.browser.browser_env import BrowserEnv, GuessRejected
 

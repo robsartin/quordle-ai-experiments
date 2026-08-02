@@ -75,6 +75,65 @@ class BrowserEnv:
             return True
         return all(scraper.solved_on(board) is not None for board in boards)
 
+    def read_answers(self) -> list[str]:
+        """The four board answers the site reveals at game-over (uppercase, in
+        board order), or [] if the game is not over (no results modal).
+
+        Answer-blind (ADR 13): only read after a game ends -- never consulted
+        during play.
+        """
+        try:
+            self._page.wait_for_selector(
+                '[aria-label="Link to word definition"]', timeout=REVEAL_TIMEOUT_MS
+            )
+        except PlaywrightTimeoutError:
+            return []
+        texts = self._page.eval_on_selector_all(
+            '[aria-label="Link to word definition"]',
+            "els => els.map(e => (e.innerText || '').trim().toUpperCase())",
+        )
+        return [t for t in texts if t]
+
+    def new_game(self) -> None:
+        """Start a fresh practice game in the current page via the results
+        modal's "New Practice Game" button (confirmed selector). Match the
+        button's aria-label, not its text -- get_by_text resolves to the SVG
+        <title>, which isn't clickable (same gotcha as the Enter key).
+
+        Precondition: the game is over (the button lives in the results
+        modal). Raises RuntimeError otherwise -- the caller decides what to do
+        (the multi-game loop ends the batch). The early-end case (starting a
+        fresh game after we ended a game early ourselves) is a deferred
+        follow-up.
+        """
+        button = self._page.locator('button[aria-label="New Practice Game"]')
+        if button.count() == 0:
+            raise RuntimeError("no 'New Practice Game' button (game not over?)")
+        button.first.click()
+        self._page.wait_for_function(
+            """
+            (numBoards) => {
+                const isPlayed = (label) =>
+                    !!label && (
+                        label.includes('is correct') ||
+                        label.includes('is in a different spot') ||
+                        label.includes('is incorrect')
+                    );
+                for (let b = 1; b <= numBoards; b++) {
+                    const boxes = document.querySelectorAll(
+                        `[aria-label="Game Board ${b}"] .quordle-box`
+                    );
+                    for (const e of boxes) {
+                        if (isPlayed(e.getAttribute('aria-label'))) return false;
+                    }
+                }
+                return true;
+            }
+            """,
+            arg=self.num_boards,
+            timeout=REVEAL_TIMEOUT_MS,
+        )
+
     def submit(self, guess: str) -> TurnResult:
         guess = guess.upper()
         if len(guess) != 5 or guess not in self.allowed:

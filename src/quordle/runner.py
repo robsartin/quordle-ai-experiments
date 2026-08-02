@@ -34,6 +34,14 @@ class _ContextEnv(Environment, Protocol):
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None: ...
+    def read_answers(self) -> list[str]: ...
+
+
+class _MultiGameEnv(_ContextEnv, Protocol):
+    """A browser Environment that can also start a fresh game in place."""
+
+    def __enter__(self) -> "_MultiGameEnv": ...
+    def new_game(self) -> None: ...
 
 
 def sample_answers(rng: random.Random, answers: tuple[str, ...], count: int = 4) -> list[str]:
@@ -201,44 +209,22 @@ def _play_browser_game(
     return SolveResult(guesses, solved_on), None
 
 
-def run_browser_game(
-    policy: Policy,
+def _browser_record(
+    result: SolveResult,
+    ended_early: "Exception | None",
     *,
     seq: int,
     date: str,
-    allowed: frozenset[str],
-    headless: bool,
-    metadata: dict[str, str] | None = None,
-    env_factory: Callable[[], _ContextEnv] | None = None,
+    answers: list[str],
+    fallbacks: int,
+    metadata: dict[str, str] | None,
 ) -> dict[str, Any]:
-    factory = env_factory
-    if factory is None:
-
-        def _default_env_factory() -> _ContextEnv:
-            from quordle.browser.browser_env import BrowserEnv
-
-            return BrowserEnv(allowed=allowed, headless=headless)
-
-        factory = _default_env_factory
-
-    with factory() as env:
-        result, ended_early = _play_browser_game(env, policy, wordlist.load_answers())
-
-    if ended_early is not None:
-        from quordle.browser.browser_env import GuessRejected
-
-        reason = (
-            f"the site rejected a guess: {ended_early}"
-            if isinstance(ended_early, GuessRejected)
-            else f"a transient API error interrupted play: {ended_early!r}"
-        )
-        print(
-            f"Browser game ended early after {len(result.guesses)} guess(es) -- "
-            f"{reason}. Logging the partial result."
-        )
-
     words = [
-        {"board": i + 1, "answer": "", "solvedOnGuess": result.solved_on[i] or 0}
+        {
+            "board": i + 1,
+            "answer": answers[i] if i < len(answers) else "",
+            "solvedOnGuess": result.solved_on[i] or 0,
+        }
         for i in range(len(result.solved_on))
     ]
     boards_solved = sum(1 for w in words if w["solvedOnGuess"])
@@ -255,12 +241,114 @@ def run_browser_game(
     }
     if ended_early is not None:
         record["endedEarly"] = True
-    fallbacks = getattr(policy, "fallback_count", 0)
     if fallbacks:
         record["fallbacks"] = fallbacks
     if metadata:
         record.update(metadata)
     return record
+
+
+def run_browser_game(
+    policy: Policy,
+    *,
+    seq: int,
+    date: str,
+    allowed: frozenset[str],
+    headless: bool,
+    metadata: dict[str, str] | None = None,
+    env_factory: Callable[[], _MultiGameEnv] | None = None,
+) -> dict[str, Any]:
+    records = run_browser_games(
+        lambda: policy,
+        count=1,
+        start_seq=seq,
+        date=date,
+        allowed=allowed,
+        headless=headless,
+        metadata=metadata,
+        env_factory=env_factory,
+    )
+    return records[0]
+
+
+def run_browser_games(
+    policy_factory: Callable[[], Policy],
+    *,
+    count: int,
+    start_seq: int,
+    date: str,
+    allowed: frozenset[str],
+    headless: bool,
+    metadata: dict[str, str] | None = None,
+    env_factory: Callable[[], _MultiGameEnv] | None = None,
+) -> list[dict[str, Any]]:
+    """Play `count` practice games in ONE long-lived browser, logging each.
+
+    Between games, new_game() starts a fresh puzzle in the same browser. A
+    game that fails unexpectedly is logged-and-skipped so the batch continues;
+    if new_game() cannot reach a fresh puzzle (e.g. after an early end -- a
+    deferred case), the batch ends gracefully with the games completed so far.
+    A fresh policy per game (via policy_factory) keeps per-game state clean.
+    """
+    factory = env_factory
+    if factory is None:
+
+        def _default_env_factory() -> _MultiGameEnv:
+            from quordle.browser.browser_env import BrowserEnv
+
+            return BrowserEnv(allowed=allowed, headless=headless)
+
+        factory = _default_env_factory
+
+    records: list[dict[str, Any]] = []
+    with factory() as env:
+        for offset in range(count):
+            seq = start_seq + offset
+            if offset > 0:
+                try:
+                    env.new_game()
+                except Exception as exc:
+                    print(
+                        f"Could not start game {seq} ({exc!r}); "
+                        f"ending batch after {len(records)} game(s)."
+                    )
+                    break
+            policy = policy_factory()
+            try:
+                result, ended_early = _play_browser_game(env, policy, wordlist.load_answers())
+            except Exception as exc:
+                print(f"Game {seq} failed ({exc!r}); continuing.")
+                continue
+            answers: list[str] = []
+            if ended_early is None:
+                try:
+                    answers = env.read_answers()
+                except Exception as exc:
+                    print(f"Game {seq}: answer scrape failed ({exc!r}); logging without answers.")
+            if ended_early is not None:
+                from quordle.browser.browser_env import GuessRejected
+
+                reason = (
+                    f"the site rejected a guess: {ended_early}"
+                    if isinstance(ended_early, GuessRejected)
+                    else f"a transient API error interrupted play: {ended_early!r}"
+                )
+                print(
+                    f"Browser game {seq} ended early after {len(result.guesses)} "
+                    f"guess(es) -- {reason}."
+                )
+            records.append(
+                _browser_record(
+                    result,
+                    ended_early,
+                    seq=seq,
+                    date=date,
+                    answers=answers,
+                    fallbacks=getattr(policy, "fallback_count", 0),
+                    metadata=metadata,
+                )
+            )
+    return records
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -284,16 +372,17 @@ def main() -> None:
     factory, metadata = build_policy_factory(args.player, args.assist, args.model)
 
     if args.env == "browser":
-        record = run_browser_game(
-            factory(),
-            seq=next_seq(args.out),
+        records = run_browser_games(
+            factory,
+            count=args.count,
+            start_seq=next_seq(args.out),
             date=args.date,
             allowed=wordlist.load_allowed(),
             headless=not args.headed,
             metadata={**metadata, "mode": "browser"},
         )
-        append_jsonl(args.out, [record])
-        print(f"Appended 1 {args.player} browser game to {args.out}")
+        append_jsonl(args.out, records)
+        print(f"Appended {len(records)} {args.player} browser game(s) to {args.out}")
         return
 
     records = run_many(
