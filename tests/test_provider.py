@@ -34,3 +34,26 @@ def test_claude_provider_default_max_tokens_is_generous():
     # structured output after thinking. Construct offline (no network on ctor).
     provider = ClaudeProvider()
     assert provider._max_tokens >= 16000
+
+
+def test_claude_provider_read_timeout_is_bounded():
+    from quordle.provider import ClaudeProvider
+
+    # A stalled TLS read must not hang an unattended run for the SDK's 600s
+    # default read timeout (which froze overnight runs). The provider sets a
+    # short, finite request timeout so a stall fails fast and the SDK retries
+    # on a fresh connection. Construct offline (no network on ctor).
+    provider = ClaudeProvider()
+    t = provider._client.timeout
+    read = t if isinstance(t, (int, float)) else t.read
+    assert read is not None and read <= 120
+
+
+def test_claude_provider_prefers_ipv4():
+    from quordle.provider import ClaudeProvider
+
+    # Every observed API stall was a wedged IPv6 socket; binding the local
+    # address to the IPv4 wildcard forces IPv4 and sidesteps that route.
+    provider = ClaudeProvider()
+    transport = provider._client._client._transport
+    assert transport._pool._local_address == "0.0.0.0"
