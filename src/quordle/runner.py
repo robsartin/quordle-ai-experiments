@@ -5,7 +5,7 @@ import json
 import random
 from collections.abc import Callable
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from quordle import wordlist
 from quordle.board import Board
@@ -14,9 +14,6 @@ from quordle.llm_policy import Assist, LLMPolicy
 from quordle.policy import FixedOpenersThenGreedy, Policy
 from quordle.provider import ClaudeProvider
 from quordle.solver import SolveResult, solve
-
-if TYPE_CHECKING:
-    from quordle.browser.browser_env import GuessRejected
 
 DEFAULT_LOG = "data/quordle_games.jsonl"
 
@@ -141,21 +138,30 @@ def build_policy_factory(
 
 def _play_browser_game(
     env: Environment, policy: Policy, answers: tuple[str, ...]
-) -> tuple[SolveResult, "GuessRejected | None"]:
-    """Mirror solver.solve()'s loop, but recover from the live site rejecting
-    a guess mid-game instead of losing all progress made so far.
+) -> tuple[SolveResult, "Exception | None"]:
+    """Mirror solver.solve()'s loop, but recover from two mid-game failures
+    unique to live play instead of losing all progress made so far: the site
+    rejecting a guess, and a transient API stall while an LLM policy is
+    thinking.
 
     solve() is deliberately environment-agnostic -- it must not import a
     browser-specific exception type -- and its guesses/solved_on state is
-    local to its call frame, so it has no way to expose partial progress if
-    env.submit() raises. A site-side rejection is unique to BrowserEnv
-    (SimEngine can never raise it), so this loop, otherwise identical to
-    solve()'s, lives here instead: on GuessRejected it returns whatever
-    guesses/solved_on were recorded before the rejection, so the caller can
-    still log a (partial, won=False) record instead of losing the game --
-    and, for a real `--player claude` run, the API spend that produced those
-    accepted guesses.
+    local to its call frame, so it has no way to expose partial progress if a
+    call raises. Both failures are unique to live play (SimEngine/MockProvider
+    can never raise them), so this loop, otherwise identical to solve()'s,
+    lives here instead. On either it returns whatever guesses/solved_on were
+    recorded first, so the caller can still log a (partial, won=False) record
+    -- preserving, for a real `--player claude` run, the API spend that
+    produced the accepted guesses -- and an unattended multi-game loop keeps
+    going to the next game instead of crashing.
+
+    Only transient connection/timeout errors are caught (APIConnectionError,
+    which covers APITimeoutError); auth/bad-request errors propagate, since
+    those are real bugs that should fail loudly rather than silently ending
+    every game.
     """
+    from anthropic import APIConnectionError
+
     from quordle.browser.browser_env import GuessRejected
 
     full = frozenset(w.upper() for w in answers)
@@ -165,7 +171,10 @@ def _play_browser_game(
     solved_on: list[int | None] = [None] * env.num_boards
 
     while not env.finished():
-        guess = policy.choose(boards, history, env.allowed, env.remaining_guesses())
+        try:
+            guess = policy.choose(boards, history, env.allowed, env.remaining_guesses())
+        except APIConnectionError as exc:
+            return SolveResult(guesses, solved_on), exc
         try:
             result = env.submit(guess)
         except GuessRejected as exc:
@@ -213,12 +222,19 @@ def run_browser_game(
         factory = _default_env_factory
 
     with factory() as env:
-        result, rejected = _play_browser_game(env, policy, wordlist.load_answers())
+        result, ended_early = _play_browser_game(env, policy, wordlist.load_answers())
 
-    if rejected is not None:
+    if ended_early is not None:
+        from quordle.browser.browser_env import GuessRejected
+
+        reason = (
+            f"the site rejected a guess: {ended_early}"
+            if isinstance(ended_early, GuessRejected)
+            else f"a transient API error interrupted play: {ended_early!r}"
+        )
         print(
             f"Browser game ended early after {len(result.guesses)} guess(es) -- "
-            f"the site rejected a guess: {rejected}. Logging the partial result."
+            f"{reason}. Logging the partial result."
         )
 
     words = [
@@ -237,7 +253,7 @@ def run_browser_game(
         "won": boards_solved == len(words),
         "words": words,
     }
-    if rejected is not None:
+    if ended_early is not None:
         record["endedEarly"] = True
     fallbacks = getattr(policy, "fallback_count", 0)
     if fallbacks:
