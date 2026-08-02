@@ -68,6 +68,27 @@ def test_browser_env_new_game_resets_board():
         assert scraper.count_played(env._read_boards()) == 1
 
 
+def test_browser_env_new_game_from_early_ended_game():
+    # Issue #22: when a game ends EARLY (mid-play, no results modal / button),
+    # new_game() must still reach a fresh puzzle via the localStorage-clear +
+    # reload fallback, so a multi-game batch continues past a stalled game.
+    from quordle import wordlist
+    from quordle.browser import scraper
+    from quordle.browser.browser_env import BrowserEnv
+
+    allowed = wordlist.load_allowed()
+    with BrowserEnv(allowed=allowed, headless=True) as env:
+        # Play only a few guesses -> mid-game, NOT over, so no button exists.
+        for g in ("SLATE", "CRANE", "MOUND"):
+            env.submit(g)
+        assert not env.finished()
+        assert scraper.count_played(env._read_boards()) == 3
+        env.new_game()  # button absent -> fallback path
+        assert scraper.count_played(env._read_boards()) == 0
+        env.submit("SLATE")
+        assert scraper.count_played(env._read_boards()) == 1
+
+
 def test_browser_env_raises_guess_rejected_for_word_the_site_refuses():
     from quordle.browser.browser_env import BrowserEnv, GuessRejected
 

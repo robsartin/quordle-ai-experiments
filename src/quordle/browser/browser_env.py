@@ -95,21 +95,29 @@ class BrowserEnv:
         return [t for t in texts if t]
 
     def new_game(self) -> None:
-        """Start a fresh practice game in the current page via the results
-        modal's "New Practice Game" button (confirmed selector). Match the
-        button's aria-label, not its text -- get_by_text resolves to the SVG
-        <title>, which isn't clickable (same gotcha as the Enter key).
+        """Start a fresh practice game in the current page.
 
-        Precondition: the game is over (the button lives in the results
-        modal). Raises RuntimeError otherwise -- the caller decides what to do
-        (the multi-game loop ends the batch). The early-end case (starting a
-        fresh game after we ended a game early ourselves) is a deferred
-        follow-up.
+        Fast path: click the results modal's "New Practice Game" button when
+        the game reached game-over (match the button's aria-label, not its
+        text -- get_by_text resolves to the SVG <title>, same gotcha as the
+        Enter key).
+
+        Fallback (issue #22): when we ended a game early ourselves (a stall or
+        rejection), there is no results modal, so the button is absent. The
+        practice game persists in localStorage -- a plain reload or Practice
+        re-click RESUMES the partial game rather than resetting it (scouted
+        2026-08-02) -- so clear storage first, then reload and re-enter
+        Practice to force a fresh puzzle. This lets a multi-game batch continue
+        past an early-ended game instead of stopping.
         """
         button = self._page.locator('button[aria-label="New Practice Game"]')
-        if button.count() == 0:
-            raise RuntimeError("no 'New Practice Game' button (game not over?)")
-        button.first.click()
+        if button.count() > 0:
+            button.first.click()
+        else:
+            self._page.evaluate("() => localStorage.clear()")
+            self._page.goto(QUORDLE_URL)
+            self._page.get_by_text("Practice", exact=True).click()
+            self._page.wait_for_selector('[aria-label="Game Board 1"] .quordle-box')
         self._page.wait_for_function(
             """
             (numBoards) => {
