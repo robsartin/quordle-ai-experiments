@@ -34,6 +34,7 @@ class _ContextEnv(Environment, Protocol):
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None: ...
+    def read_answers(self) -> list[str]: ...
 
 
 def sample_answers(rng: random.Random, answers: tuple[str, ...], count: int = 4) -> list[str]:
@@ -201,6 +202,45 @@ def _play_browser_game(
     return SolveResult(guesses, solved_on), None
 
 
+def _browser_record(
+    result: SolveResult,
+    ended_early: "Exception | None",
+    *,
+    seq: int,
+    date: str,
+    answers: list[str],
+    fallbacks: int,
+    metadata: dict[str, str] | None,
+) -> dict[str, Any]:
+    words = [
+        {
+            "board": i + 1,
+            "answer": answers[i] if i < len(answers) else "",
+            "solvedOnGuess": result.solved_on[i] or 0,
+        }
+        for i in range(len(result.solved_on))
+    ]
+    boards_solved = sum(1 for w in words if w["solvedOnGuess"])
+    record: dict[str, Any] = {
+        "seq": seq,
+        "date": date,
+        "mode": "browser",
+        "guesses": result.guesses,
+        "totalGuessesUsed": len(result.guesses),
+        "maxGuesses": 9,
+        "boardsSolved": boards_solved,
+        "won": boards_solved == len(words),
+        "words": words,
+    }
+    if ended_early is not None:
+        record["endedEarly"] = True
+    if fallbacks:
+        record["fallbacks"] = fallbacks
+    if metadata:
+        record.update(metadata)
+    return record
+
+
 def run_browser_game(
     policy: Policy,
     *,
@@ -223,6 +263,7 @@ def run_browser_game(
 
     with factory() as env:
         result, ended_early = _play_browser_game(env, policy, wordlist.load_answers())
+        answers = env.read_answers() if ended_early is None else []
 
     if ended_early is not None:
         from quordle.browser.browser_env import GuessRejected
@@ -237,30 +278,15 @@ def run_browser_game(
             f"{reason}. Logging the partial result."
         )
 
-    words = [
-        {"board": i + 1, "answer": "", "solvedOnGuess": result.solved_on[i] or 0}
-        for i in range(len(result.solved_on))
-    ]
-    boards_solved = sum(1 for w in words if w["solvedOnGuess"])
-    record: dict[str, Any] = {
-        "seq": seq,
-        "date": date,
-        "mode": "browser",
-        "guesses": result.guesses,
-        "totalGuessesUsed": len(result.guesses),
-        "maxGuesses": 9,
-        "boardsSolved": boards_solved,
-        "won": boards_solved == len(words),
-        "words": words,
-    }
-    if ended_early is not None:
-        record["endedEarly"] = True
-    fallbacks = getattr(policy, "fallback_count", 0)
-    if fallbacks:
-        record["fallbacks"] = fallbacks
-    if metadata:
-        record.update(metadata)
-    return record
+    return _browser_record(
+        result,
+        ended_early,
+        seq=seq,
+        date=date,
+        answers=answers,
+        fallbacks=getattr(policy, "fallback_count", 0),
+        metadata=metadata,
+    )
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

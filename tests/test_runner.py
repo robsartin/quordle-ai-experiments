@@ -161,6 +161,9 @@ class FakeBrowserEnv:
             return TurnResult(self._used, [BoardState(0, True, self._used, pattern)])
         return TurnResult(self._used, [BoardState(0, False, None, pattern)])
 
+    def read_answers(self):
+        return [self._answer] if self.finished() else []
+
     def __enter__(self):
         return self
 
@@ -193,7 +196,7 @@ def test_run_browser_game_record_shape_offline():
     assert record["seq"] == 5 and record["mode"] == "browser" and record["maxGuesses"] == 9
     assert record["totalGuessesUsed"] == len(record["guesses"]) == 1
     assert record["guesses"] == ["SLATE"]
-    assert record["words"] == [{"board": 1, "answer": "", "solvedOnGuess": 1}]
+    assert record["words"] == [{"board": 1, "answer": "SLATE", "solvedOnGuess": 1}]
     assert record["boardsSolved"] == 1
     assert record["won"] is True
     assert record["player"] == "heuristic"
