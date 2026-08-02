@@ -317,6 +317,7 @@ def run_browser_games(
     headless: bool,
     metadata: dict[str, str] | None = None,
     env_factory: Callable[[], _MultiGameEnv] | None = None,
+    out: str | None = None,
 ) -> list[dict[str, Any]]:
     """Play `count` practice games in ONE long-lived browser, logging each.
 
@@ -325,6 +326,12 @@ def run_browser_games(
     if new_game() cannot reach a fresh puzzle (e.g. after an early end -- a
     deferred case), the batch ends gracefully with the games completed so far.
     A fresh policy per game (via policy_factory) keeps per-game state clean.
+
+    When `out` is given, each game is appended to that log the instant it
+    finishes (issue #26) rather than the whole batch at the end -- so a run
+    that is killed or crashes mid-batch keeps every completed game, the log
+    fills in live, and #11's per-append backup runs per game. The full list is
+    still returned for callers that want it (tests, the count=1 wrapper).
     """
     factory = env_factory
     if factory is None:
@@ -373,17 +380,18 @@ def run_browser_games(
                     f"Browser game {seq} ended early after {len(result.guesses)} "
                     f"guess(es) -- {reason}."
                 )
-            records.append(
-                _browser_record(
-                    result,
-                    ended_early,
-                    seq=seq,
-                    date=date,
-                    answers=answers,
-                    fallbacks=getattr(policy, "fallback_count", 0),
-                    metadata=metadata,
-                )
+            record = _browser_record(
+                result,
+                ended_early,
+                seq=seq,
+                date=date,
+                answers=answers,
+                fallbacks=getattr(policy, "fallback_count", 0),
+                metadata=metadata,
             )
+            records.append(record)
+            if out is not None:
+                append_jsonl(out, [record])  # persist immediately -- crash/kill safe
     return records
 
 
@@ -416,8 +424,8 @@ def main() -> None:
             allowed=wordlist.load_allowed(),
             headless=not args.headed,
             metadata={**metadata, "mode": "browser"},
+            out=args.out,  # append each game as it finishes (issue #26)
         )
-        append_jsonl(args.out, records)
         print(f"Appended {len(records)} {args.player} browser game(s) to {args.out}")
         return
 

@@ -361,6 +361,51 @@ def test_run_browser_games_ends_batch_when_new_game_cannot_reset():
     assert [r["seq"] for r in records] == [1]
 
 
+def test_run_browser_games_appends_each_game_to_out(tmp_path):
+    # Issue #26: with `out`, run_browser_games persists each game itself (not a
+    # single at-end append by the caller), so the log fills in as games finish.
+    from quordle.runner import run_browser_games
+
+    out = tmp_path / "games.jsonl"
+    allowed = frozenset({"SLATE"})
+    env = FakeBrowserEnv("SLATE", allowed)
+    records = run_browser_games(
+        lambda: FixedGuessPolicy(["SLATE"]),
+        count=3,
+        start_seq=1,
+        date="2026-08-02",
+        allowed=allowed,
+        headless=True,
+        env_factory=lambda: env,
+        out=str(out),
+    )
+    lines = out.read_text().splitlines()
+    assert [json.loads(line)["seq"] for line in lines] == [1, 2, 3]
+    assert [r["seq"] for r in records] == [1, 2, 3]  # still returns the list too
+
+
+def test_run_browser_games_persists_games_before_an_early_batch_end(tmp_path):
+    # Crash/kill safety: a game failing mid-batch ends the batch, but the games
+    # completed BEFORE it are already on disk -- not lost to an at-end append.
+    from quordle.runner import run_browser_games
+
+    out = tmp_path / "games.jsonl"
+    allowed = frozenset({"SLATE"})
+    env = FakeBrowserEnv("SLATE", allowed, fail_on_game=3)
+    run_browser_games(
+        lambda: FixedGuessPolicy(["SLATE"]),
+        count=5,
+        start_seq=1,
+        date="2026-08-02",
+        allowed=allowed,
+        headless=True,
+        env_factory=lambda: env,
+        out=str(out),
+    )
+    lines = out.read_text().splitlines()
+    assert [json.loads(line)["seq"] for line in lines] == [1, 2]  # saved before the crash
+
+
 def test_run_browser_game_exhausts_retries_then_logs_partial():
     # The site ALWAYS rejects SNAKE; FixedGuessPolicy keeps re-proposing it for
     # that turn (it ignores `excluded`), so every retry is also rejected and
