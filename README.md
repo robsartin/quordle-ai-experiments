@@ -11,8 +11,17 @@ self-contained HTML stats dashboard.
 
 ```
 quordle-ai-experiments/
-├── quordle_stats.py                  # reads the log → builds the dashboard + PNGs
-├── requirements.txt                  # just matplotlib
+├── src/quordle/                      # the installable package
+│   ├── wordlist.py                   # answer/allowed word lists
+│   ├── scoring.py                    # guess scoring
+│   ├── board.py                      # single-board state
+│   ├── engine.py                     # multi-board sim engine
+│   ├── policy.py                     # heuristic guessing policies
+│   ├── solver.py                     # drives a policy to a solved/failed game
+│   ├── provider.py                   # Claude API access for LLM-played games
+│   ├── llm_policy.py                 # policy backed by an LLM provider
+│   ├── runner.py                     # plays games, appends JSONL (quordle-sim)
+│   └── dashboard.py                  # reads the log → builds the dashboard + PNGs (quordle-stats)
 ├── data/
 │   ├── quordle_games.jsonl           # the running game log (gitignored)
 │   └── quordle_games.sample.jsonl    # 2 example rows, committed to show the format
@@ -28,10 +37,18 @@ shape.
 ## Usage
 
 ```bash
-pip install -r requirements.txt
-python3 quordle_stats.py                        # uses data/quordle_games.jsonl
-python3 quordle_stats.py data/quordle_games.jsonl -o quordle_dashboard.html --png-dir charts
+pip install -e ".[dev]"
+quordle-sim -n 100 --seed 0                       # heuristic games -> data/quordle_games.jsonl
+quordle-sim --player claude -n 5 --assist none    # Claude-played games (needs API access)
+quordle-stats                                     # build quordle_dashboard.html
+
+python -m playwright install chromium             # one-time, needed for --env browser
+quordle-sim --env browser --player claude         # plays one live quordle.com game (needs ANTHROPIC_API_KEY)
 ```
+
+`--env browser` plays a single live game against beta.quordle.com via Playwright
+(headless by default; pass `--headed` to watch it) and logs it with `mode:"browser"`
+instead of `mode:"sim"`/`mode:"claude"`.
 
 Open `quordle_dashboard.html` in any browser.
 
