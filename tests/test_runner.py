@@ -218,6 +218,48 @@ def test_browser_game_prints_per_guess_progress(capsys):
     assert "guess 2/9: SLATE -> 1/1 boards solved" in out
 
 
+class TimeoutOnNthGuessPolicy:
+    """Policy that raises anthropic.APITimeoutError on a chosen guess, to
+    exercise the browser loop's transient-API-stall recovery offline."""
+
+    def __init__(self, guesses, raise_on):
+        self._guesses = guesses
+        self._raise_on = raise_on  # 1-based choose() call number
+        self._calls = 0
+
+    def choose(self, boards, history, allowed, remaining):
+        self._calls += 1
+        if self._calls == self._raise_on:
+            import anthropic
+            import httpx
+
+            raise anthropic.APITimeoutError(
+                request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            )
+        return self._guesses[len(history)]
+
+
+def test_browser_game_ends_gracefully_on_api_timeout():
+    # A transient API stall (SDK retries exhausted -> APITimeoutError) must not
+    # crash an unattended run: end the game with a partial (won=False) record
+    # covering the guesses accepted before the stall, like GuessRejected.
+    allowed = frozenset({"CRANE", "SLATE"})
+    env = FakeBrowserEnv("SLATE", allowed)
+    record = run_browser_game(
+        TimeoutOnNthGuessPolicy(["CRANE", "SLATE"], raise_on=2),
+        seq=8,
+        date="2026-08-02",
+        allowed=allowed,
+        headless=True,
+        env_factory=lambda: env,
+    )
+    assert record["endedEarly"] is True
+    assert record["guesses"] == ["CRANE"]
+    assert record["totalGuessesUsed"] == 1
+    assert record["boardsSolved"] == 0
+    assert record["won"] is False
+
+
 def test_run_browser_game_logs_partial_result_on_guess_rejected():
     # The site rejects the 2nd guess; the game should end early with a
     # (won=False) record reflecting the 1 accepted guess, not crash or lose
