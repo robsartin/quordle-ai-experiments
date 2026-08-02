@@ -151,6 +151,7 @@ class FakeBrowserEnv:
         allowed,
         max_guesses=9,
         reject_on_submit=None,
+        reject_words=frozenset(),
         fail_on_game=None,
         new_game_fails=False,
     ):
@@ -162,6 +163,7 @@ class FakeBrowserEnv:
         self._solved_on = None
         self._submit_calls = 0
         self._reject_on_submit = reject_on_submit  # 1-based submit() call number
+        self._reject_words = reject_words
         self._game = 1
         self._fail_on_game = fail_on_game  # 1-based game index whose submit raises
         self._new_game_fails = new_game_fails
@@ -175,6 +177,8 @@ class FakeBrowserEnv:
     def submit(self, guess):
         from quordle.browser.browser_env import GuessRejected
 
+        if guess.upper() in self._reject_words:
+            raise GuessRejected(f"guess not accepted by the site: {guess!r}")
         if self._game == self._fail_on_game:
             raise RuntimeError(f"simulated browser failure on game {self._game}")
         self._submit_calls += 1
@@ -210,7 +214,7 @@ class FixedGuessPolicy:
     def __init__(self, guesses):
         self._guesses = guesses
 
-    def choose(self, boards, history, allowed, remaining):
+    def choose(self, boards, history, allowed, remaining, excluded=frozenset()):
         return self._guesses[len(history)]
 
 
@@ -265,7 +269,7 @@ class TimeoutOnNthGuessPolicy:
         self._raise_on = raise_on  # 1-based choose() call number
         self._calls = 0
 
-    def choose(self, boards, history, allowed, remaining):
+    def choose(self, boards, history, allowed, remaining, excluded=frozenset()):
         self._calls += 1
         if self._calls == self._raise_on:
             import anthropic
@@ -356,11 +360,13 @@ def test_run_browser_games_ends_batch_when_new_game_cannot_reset():
 
 
 def test_run_browser_game_logs_partial_result_on_guess_rejected():
-    # The site rejects the 2nd guess; the game should end early with a
-    # (won=False) record reflecting the 1 accepted guess, not crash or lose
-    # that guess's progress.
+    # The site ALWAYS rejects SNAKE; FixedGuessPolicy keeps re-proposing it for
+    # that turn (it ignores `excluded`), so every retry is also rejected and
+    # the turn's retries exhaust. The game should end early with a (won=False)
+    # record reflecting the 1 accepted guess, not crash or lose that guess's
+    # progress.
     allowed = frozenset({"SLATE", "SNAKE"})
-    env = FakeBrowserEnv("CRANE", allowed, reject_on_submit=2)
+    env = FakeBrowserEnv("CRANE", allowed, reject_words={"SNAKE"})
     record = run_browser_game(
         FixedGuessPolicy(["SLATE", "SNAKE"]),
         seq=6,
@@ -374,6 +380,37 @@ def test_run_browser_game_logs_partial_result_on_guess_rejected():
     assert record["totalGuessesUsed"] == 1
     assert record["boardsSolved"] == 0
     assert record["won"] is False
+
+
+class RetryPolicy:
+    """Per turn, returns the first of its options not in `excluded`."""
+
+    def __init__(self, plan):  # plan: list[list[str]] per turn
+        self._plan = plan
+
+    def choose(self, boards, history, allowed, remaining, excluded=frozenset()):
+        for w in self._plan[len(history)]:
+            if w not in excluded:
+                return w
+        return self._plan[len(history)][-1]
+
+
+def test_run_browser_game_retries_and_continues_after_rejection():
+    # The site rejects SNAKE; a policy that honors `excluded` retries within
+    # the SAME turn with an alternative (SLATE) instead of ending the game.
+    allowed = frozenset({"CRANE", "SLATE", "SNAKE"})
+    env = FakeBrowserEnv("SLATE", allowed, reject_words={"SNAKE"})
+    record = run_browser_game(
+        RetryPolicy([["CRANE"], ["SNAKE", "SLATE"]]),
+        seq=9,
+        date="2026-08-01",
+        allowed=allowed,
+        headless=True,
+        env_factory=lambda: env,
+    )
+    assert record["guesses"] == ["CRANE", "SLATE"]
+    assert "endedEarly" not in record
+    assert record["won"] is True
 
 
 def test_run_browser_games_carries_browser_metadata():

@@ -18,6 +18,7 @@ from quordle.provider import ClaudeProvider
 from quordle.solver import SolveResult, solve
 
 DEFAULT_LOG = "data/quordle_games.jsonl"
+MAX_REJECT_RETRIES = 3
 
 
 class _ContextEnv(Environment, Protocol):
@@ -170,11 +171,18 @@ def _play_browser_game(
     local to its call frame, so it has no way to expose partial progress if a
     call raises. Both failures are unique to live play (SimEngine/MockProvider
     can never raise them), so this loop, otherwise identical to solve()'s,
-    lives here instead. On either it returns whatever guesses/solved_on were
-    recorded first, so the caller can still log a (partial, won=False) record
-    -- preserving, for a real `--player claude` run, the API spend that
-    produced the accepted guesses -- and an unattended multi-game loop keeps
-    going to the next game instead of crashing.
+    lives here instead.
+
+    A rejected guess (the site refuses a word still in our bundled `allowed`
+    set) is retried within the SAME turn with the rejected word(s) excluded,
+    up to MAX_REJECT_RETRIES times, so the game continues instead of ending.
+    Only if every retry for a turn is also rejected does the game end early.
+    On that, or on a transient API stall, this returns whatever
+    guesses/solved_on were recorded first, so the caller can still log a
+    (partial, won=False) record -- preserving, for a real `--player claude`
+    run, the API spend that produced the accepted guesses -- and an
+    unattended multi-game loop keeps going to the next game instead of
+    crashing.
 
     Only transient connection/timeout errors are caught (APIConnectionError,
     which covers APITimeoutError); auth/bad-request errors propagate, since
@@ -192,32 +200,47 @@ def _play_browser_game(
     solved_on: list[int | None] = [None] * env.num_boards
 
     while not env.finished():
-        try:
-            guess = policy.choose(boards, history, env.allowed, env.remaining_guesses())
-        except APIConnectionError as exc:
-            return SolveResult(guesses, solved_on), exc
-        try:
-            result = env.submit(guess)
-        except GuessRejected as exc:
-            return SolveResult(guesses, solved_on), exc
-        guesses.append(guess)
-        history.append(TurnFeedback(guess, [state.pattern for state in result.boards]))
-        for i, state in enumerate(result.boards):
-            if state.solved:
-                if solved_on[i] is None:
-                    solved_on[i] = state.solved_on
-                boards[i] = Board(frozenset())
-            elif state.pattern is not None:
-                boards[i] = boards[i].filter(guess, state.pattern)
-        # Per-guess progress so unattended browser runs show they are alive
-        # (a stalled turn is otherwise silent). Browser-only -- sim runs, which
-        # loop over many games, stay quiet via their own summary line.
-        solved_count = sum(1 for s in solved_on if s is not None)
-        print(
-            f"  guess {len(guesses)}/{env.max_guesses}: {guess} -> "
-            f"{solved_count}/{env.num_boards} boards solved",
-            flush=True,
-        )
+        excluded: set[str] = set()
+        rejected: GuessRejected | None = None
+        for _ in range(MAX_REJECT_RETRIES + 1):
+            try:
+                guess = policy.choose(
+                    boards,
+                    history,
+                    env.allowed,
+                    env.remaining_guesses(),
+                    excluded=frozenset(excluded),
+                )
+            except APIConnectionError as exc:
+                return SolveResult(guesses, solved_on), exc
+            try:
+                result = env.submit(guess)
+            except GuessRejected as exc:
+                excluded.add(guess)
+                rejected = exc
+                continue
+            # accepted:
+            guesses.append(guess)
+            history.append(TurnFeedback(guess, [state.pattern for state in result.boards]))
+            for i, state in enumerate(result.boards):
+                if state.solved:
+                    if solved_on[i] is None:
+                        solved_on[i] = state.solved_on
+                    boards[i] = Board(frozenset())
+                elif state.pattern is not None:
+                    boards[i] = boards[i].filter(guess, state.pattern)
+            # Per-guess progress so unattended browser runs show they are alive
+            # (a stalled turn is otherwise silent). Browser-only -- sim runs,
+            # which loop over many games, stay quiet via their own summary line.
+            solved_count = sum(1 for s in solved_on if s is not None)
+            print(
+                f"  guess {len(guesses)}/{env.max_guesses}: {guess} -> "
+                f"{solved_count}/{env.num_boards} boards solved",
+                flush=True,
+            )
+            break
+        else:
+            return SolveResult(guesses, solved_on), rejected
 
     return SolveResult(guesses, solved_on), None
 

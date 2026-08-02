@@ -17,6 +17,7 @@ class Policy(Protocol):
         history: list[TurnFeedback],
         allowed: frozenset[str],
         remaining: int,
+        excluded: frozenset[str] = frozenset(),
     ) -> str: ...
 
 
@@ -38,16 +39,27 @@ class FixedOpenersThenGreedy:
         history: list[TurnFeedback],
         allowed: frozenset[str],
         remaining: int,
+        excluded: frozenset[str] = frozenset(),
     ) -> str:
         if len(history) < len(self.openers):
-            return self.openers[len(history)]
+            opener = self.openers[len(history)]
+            if opener not in excluded:
+                return opener
 
         active = [b for b in boards if b.candidates]
-        pinned = sorted(next(iter(b.candidates)) for b in active if len(b.candidates) == 1)
+        pinned = sorted(
+            next(iter(b.candidates))
+            for b in active
+            if len(b.candidates) == 1 and next(iter(b.candidates)) not in excluded
+        )
         if pinned:
             return pinned[0]
 
-        pool = sorted(set().union(*(b.candidates for b in active)))
+        pool = sorted(set().union(*(b.candidates for b in active)) - excluded)
+        if not pool:
+            pool = sorted(allowed - excluded)
+        if not pool:
+            pool = sorted(allowed)
 
         def expected_remaining(guess: str) -> float:
             total = 0.0

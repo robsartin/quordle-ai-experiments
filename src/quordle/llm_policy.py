@@ -96,22 +96,36 @@ class LLMPolicy:
         history: list[TurnFeedback],
         allowed: frozenset[str],
         remaining: int,
+        excluded: frozenset[str] = frozenset(),
     ) -> str:
         prompt = render_prompt(boards, history, self.assist, remaining)
+        if excluded:
+            prompt += (
+                "\n\nThe live site refused these words; do NOT guess them again: "
+                + ", ".join(sorted(excluded))
+                + ". Choose a different valid 5-letter word."
+            )
         note = ""
         for _ in range(self.max_retries + 1):
             response = self.provider.next_guess(prompt + note)
             guess = response.guess.strip().upper()
-            if len(guess) == 5 and guess in allowed:
+            if len(guess) == 5 and guess in allowed and guess not in excluded:
                 return guess
             note = (
                 f"\n\nYour previous answer {guess!r} is not a valid guess. "
                 "Reply with a valid 5-letter word."
             )
         self.fallback_count += 1
-        return self._fallback(boards, allowed)
+        return self._fallback(boards, allowed, excluded)
 
-    def _fallback(self, boards: list[Board], allowed: frozenset[str]) -> str:
+    def _fallback(
+        self, boards: list[Board], allowed: frozenset[str], excluded: frozenset[str] = frozenset()
+    ) -> str:
         actives = [board.candidates for board in boards if board.candidates]
         pool = sorted(set().union(*actives)) if actives else sorted(allowed)
+        pool = [p for p in pool if p not in excluded]
+        if not pool:
+            pool = sorted(allowed - excluded)
+        if not pool:
+            pool = sorted(allowed)
         return pool[0]
