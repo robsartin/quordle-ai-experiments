@@ -178,8 +178,8 @@ class FakeBrowserEnv:
         return [self._answer] if self.finished() else []
 
     def new_game(self):
-        if self._new_game_fails:
-            raise RuntimeError("cannot start new game")
+        if self._new_game_fails or not self.finished():
+            raise RuntimeError("cannot start new game (not at game-over)")
         self._used = 0
         self._solved_on = None
         self._submit_calls = 0
@@ -303,7 +303,7 @@ def test_run_browser_games_plays_count_games_and_logs_answers():
     assert all(r["words"][0]["answer"] == "SLATE" for r in records)
 
 
-def test_run_browser_games_continues_after_a_game_fails():
+def test_run_browser_games_ends_batch_after_a_mid_play_failure():
     from quordle.runner import run_browser_games
 
     allowed = frozenset({"SLATE"})
@@ -317,8 +317,10 @@ def test_run_browser_games_continues_after_a_game_fails():
         headless=True,
         env_factory=lambda: env,
     )
-    # game 2 raised mid-play -> skipped; games 1 and 3 still logged
-    assert [r["seq"] for r in records] == [1, 3]
+    # game 2 raises mid-play, leaving the page not at game-over, so the next
+    # new_game() (for game 3) finds no "New Practice Game" button and raises
+    # too -- ending the batch after game 1.
+    assert [r["seq"] for r in records] == [1]
 
 
 def test_run_browser_games_ends_batch_when_new_game_cannot_reset():

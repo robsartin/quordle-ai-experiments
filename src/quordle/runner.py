@@ -316,12 +316,27 @@ def run_browser_games(
             policy = policy_factory()
             try:
                 result, ended_early = _play_browser_game(env, policy, wordlist.load_answers())
-                answers = env.read_answers() if ended_early is None else []
             except Exception as exc:
                 print(f"Game {seq} failed ({exc!r}); continuing.")
                 continue
+            answers: list[str] = []
+            if ended_early is None:
+                try:
+                    answers = env.read_answers()
+                except Exception as exc:
+                    print(f"Game {seq}: answer scrape failed ({exc!r}); logging without answers.")
             if ended_early is not None:
-                print(f"Browser game {seq} ended early after {len(result.guesses)} guess(es).")
+                from quordle.browser.browser_env import GuessRejected
+
+                reason = (
+                    f"the site rejected a guess: {ended_early}"
+                    if isinstance(ended_early, GuessRejected)
+                    else f"a transient API error interrupted play: {ended_early!r}"
+                )
+                print(
+                    f"Browser game {seq} ended early after {len(result.guesses)} "
+                    f"guess(es) -- {reason}."
+                )
             records.append(
                 _browser_record(
                     result,
