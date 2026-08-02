@@ -20,3 +20,5 @@ env/
 # Local scratch
 .coverage
 .python-version
+doit.sh
+overnight.log
