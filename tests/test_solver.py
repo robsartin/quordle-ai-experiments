@@ -36,7 +36,7 @@ class FixedGuessPolicy:
     def __init__(self, guesses):
         self._guesses = guesses
 
-    def choose(self, boards, history, allowed, remaining):
+    def choose(self, boards, history, allowed, remaining, excluded=frozenset()):
         return self._guesses[len(history)]
 
 
