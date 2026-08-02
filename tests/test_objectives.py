@@ -201,6 +201,8 @@ def test_compare_excludes_ended_early_and_counts_skipped():
     assert panel.label == "claude/claude-sonnet-5/none"
     assert panel.games == 2
     assert panel.skipped == 1
+    # one win + one loss among the two scored games -> a genuine fractional rate
+    assert panel.win_rate == pytest.approx(0.5)
 
 
 def test_compare_omits_config_with_zero_scored_games():
@@ -273,7 +275,7 @@ def test_main_prints_table_with_skipped_footer(tmp_path, monkeypatch, capsys):
     main()
     captured = capsys.readouterr()
     assert "claude/claude-sonnet-5/none" in captured.out
-    assert "1" in captured.out  # skipped count surfaces somewhere in the footer
+    assert "skipped (endedEarly): 1" in captured.out  # exact footer, right count
     assert "provisional" in captured.out.lower()
 
 
