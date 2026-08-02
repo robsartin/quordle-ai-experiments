@@ -357,16 +357,17 @@ def main() -> None:
     factory, metadata = build_policy_factory(args.player, args.assist, args.model)
 
     if args.env == "browser":
-        record = run_browser_game(
-            factory(),
-            seq=next_seq(args.out),
+        records = run_browser_games(
+            factory,
+            count=args.count,
+            start_seq=next_seq(args.out),
             date=args.date,
             allowed=wordlist.load_allowed(),
             headless=not args.headed,
             metadata={**metadata, "mode": "browser"},
         )
-        append_jsonl(args.out, [record])
-        print(f"Appended 1 {args.player} browser game to {args.out}")
+        append_jsonl(args.out, records)
+        print(f"Appended {len(records)} {args.player} browser game(s) to {args.out}")
         return
 
     records = run_many(

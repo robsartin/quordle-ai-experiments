@@ -358,3 +358,22 @@ def test_run_browser_game_logs_partial_result_on_guess_rejected():
     assert record["totalGuessesUsed"] == 1
     assert record["boardsSolved"] == 0
     assert record["won"] is False
+
+
+def test_run_browser_games_carries_browser_metadata():
+    from quordle.runner import run_browser_games
+
+    allowed = frozenset({"SLATE"})
+    env = FakeBrowserEnv("SLATE", allowed)
+    records = run_browser_games(
+        lambda: FixedGuessPolicy(["SLATE"]),
+        count=2,
+        start_seq=1,
+        date="2026-08-02",
+        allowed=allowed,
+        headless=True,
+        metadata={"player": "claude", "mode": "browser"},
+        env_factory=lambda: env,
+    )
+    assert len(records) == 2
+    assert all(r["player"] == "claude" and r["mode"] == "browser" for r in records)
