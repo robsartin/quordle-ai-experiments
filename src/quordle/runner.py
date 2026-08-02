@@ -2,7 +2,9 @@
 
 import argparse
 import json
+import os
 import random
+import shutil
 from collections.abc import Callable
 from types import TracebackType
 from typing import Any, Protocol
@@ -115,9 +117,20 @@ def run_many(
 
 
 def append_jsonl(path: str, records: list[dict[str, Any]]) -> None:
+    _backup_if_nonempty(path)
     with open(path, "a", encoding="utf-8") as fh:
         for record in records:
             fh.write(json.dumps(record) + "\n")
+
+
+def _backup_if_nonempty(path: str) -> None:
+    """Snapshot an existing non-empty log to ``<path>.bak`` before appending,
+    leaving one recovery point. The game log is gitignored and irreplaceable,
+    and was once externally truncated to empty (issue #11); a rolling backup
+    means a bad append or accidental clobber doesn't lose everything.
+    """
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        shutil.copy2(path, path + ".bak")
 
 
 def next_seq(path: str) -> int:
