@@ -75,6 +75,25 @@ class BrowserEnv:
             return True
         return all(scraper.solved_on(board) is not None for board in boards)
 
+    def read_answers(self) -> list[str]:
+        """The four board answers the site reveals at game-over (uppercase, in
+        board order), or [] if the game is not over (no results modal).
+
+        Answer-blind (ADR 13): only read after a game ends -- never consulted
+        during play.
+        """
+        try:
+            self._page.wait_for_selector(
+                '[aria-label="Link to word definition"]', timeout=REVEAL_TIMEOUT_MS
+            )
+        except PlaywrightTimeoutError:
+            return []
+        texts = self._page.eval_on_selector_all(
+            '[aria-label="Link to word definition"]',
+            "els => els.map(e => (e.innerText || '').trim().toUpperCase())",
+        )
+        return [t for t in texts if t]
+
     def submit(self, guess: str) -> TurnResult:
         guess = guess.upper()
         if len(guess) != 5 or guess not in self.allowed:
