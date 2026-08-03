@@ -297,6 +297,32 @@ def test_config_panel_is_frozen_dataclass():
         panel.label = "y"  # type: ignore[misc]
 
 
+def test_render_table_config_column_fits_the_widest_label():
+    from quordle.objectives import _render_table
+
+    def panel(label):
+        return ConfigPanel(
+            label=label,
+            games=11,
+            skipped=0,
+            win_rate=1.0,
+            mean_avg=5.59,
+            mean_max=7.45,
+            mean_first=3.73,
+            mean_convex=135.1,
+        )
+
+    long_label = "claude/claude-sonnet-5/none · o0"
+    table = _render_table([panel("heuristic"), panel(long_label)], 0)
+    header, _sep, row_short, row_long = table.splitlines()[:4]
+    # the long label is present in full (not truncated / overflowing)
+    assert long_label in row_long
+    # header and both data rows share one width -> columns line up
+    assert len({len(header), len(row_short), len(row_long)}) == 1
+    # the config column is at least as wide as the widest label
+    assert header.index("games") >= len(long_label)
+
+
 # ---- CLI -------------------------------------------------------------------
 
 
