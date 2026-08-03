@@ -297,6 +297,25 @@ def test_config_panel_is_frozen_dataclass():
         panel.label = "y"  # type: ignore[misc]
 
 
+def test_render_table_shows_win_rate_to_one_decimal():
+    # 7/8 = 87.5% must not display as a misleading whole-number "88%".
+    from quordle.objectives import _render_table
+
+    p = ConfigPanel(
+        label="x",
+        games=8,
+        skipped=0,
+        win_rate=7 / 8,
+        mean_avg=5.0,
+        mean_max=7.0,
+        mean_first=3.0,
+        mean_convex=100.0,
+    )
+    table = _render_table([p], 0)
+    assert "87.5%" in table
+    assert "88%" not in table
+
+
 def test_render_table_config_column_fits_the_widest_label():
     from quordle.objectives import _render_table
 
