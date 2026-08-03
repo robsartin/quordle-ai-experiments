@@ -100,21 +100,40 @@ def run_many(
     start_seq: int,
     date: str,
     metadata: dict[str, Any] | None = None,
+    out: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Play `count` sim games and return their records.
+
+    When `out` is given, each game is appended the instant it finishes (issue
+    #29) rather than the whole batch at the end -- so a run killed or crashed
+    mid-batch keeps every completed game, matching the browser path.
+
+    A game interrupted by a transient API stall (an LLM player -- a real bug or
+    an out-of-credits error still propagates loudly) is skipped and the batch
+    continues, instead of one stall crashing a multi-hour sweep.
+    """
+    from anthropic import APIConnectionError
+
     rng = random.Random(seed)
     records: list[dict[str, Any]] = []
     for offset in range(count):
         picks = sample_answers(rng, answers, count=4)
-        records.append(
-            run_game(
+        seq = start_seq + offset
+        try:
+            record = run_game(
                 picks,
                 policy_factory(),
-                seq=start_seq + offset,
+                seq=seq,
                 date=date,
                 allowed=allowed,
                 metadata=metadata,
             )
-        )
+        except APIConnectionError as exc:
+            print(f"Sim game {seq} interrupted by a transient API error ({exc!r}); skipping.")
+            continue
+        records.append(record)
+        if out is not None:
+            append_jsonl(out, [record])
     return records
 
 
@@ -459,8 +478,8 @@ def main() -> None:
         start_seq=next_seq(args.out),
         date=args.date,
         metadata=metadata,
+        out=args.out,  # append each game as it finishes (issue #29)
     )
-    append_jsonl(args.out, records)
     print(f"Appended {len(records)} {args.player} games to {args.out}")
 
 

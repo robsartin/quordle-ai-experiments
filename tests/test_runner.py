@@ -84,6 +84,59 @@ def test_run_many_deterministic_for_a_seed():
     assert [g["words"] for g in a] == [g["words"] for g in b]
 
 
+def test_run_many_appends_each_game_to_out(tmp_path):
+    # Issue #29: with `out`, run_many persists each sim game as it finishes
+    # (crash/kill safe), matching the browser path -- not one at-end append.
+    out = tmp_path / "games.jsonl"
+    records = run_many(
+        3,
+        seed=1,
+        policy_factory=FixedOpenersThenGreedy,
+        answers=wordlist.load_answers(),
+        allowed=wordlist.load_allowed(),
+        start_seq=1,
+        date="2026-08-02",
+        out=str(out),
+    )
+    lines = out.read_text().splitlines()
+    assert [json.loads(line)["seq"] for line in lines] == [1, 2, 3]
+    assert [r["seq"] for r in records] == [1, 2, 3]
+
+
+def test_run_many_skips_a_game_interrupted_by_a_transient_api_error(tmp_path):
+    # A transient API stall (an LLM player) must not crash the whole sweep: the
+    # stalled game is skipped and the batch continues, completed games kept.
+    import anthropic
+    import httpx
+
+    state = {"game": 0}
+
+    class _StallPolicy:
+        def choose(self, boards, history, allowed, remaining, excluded=frozenset()):
+            raise anthropic.APITimeoutError(
+                request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            )
+
+    def factory():
+        state["game"] += 1
+        return _StallPolicy() if state["game"] == 2 else FixedOpenersThenGreedy()
+
+    out = tmp_path / "games.jsonl"
+    records = run_many(
+        3,
+        seed=1,
+        policy_factory=factory,
+        answers=wordlist.load_answers(),
+        allowed=wordlist.load_allowed(),
+        start_seq=1,
+        date="2026-08-02",
+        out=str(out),
+    )
+    # game 2 stalled -> skipped; games 1 and 3 played and logged
+    assert [json.loads(line)["seq"] for line in out.read_text().splitlines()] == [1, 3]
+    assert [r["seq"] for r in records] == [1, 3]
+
+
 def test_append_jsonl_round_trips(tmp_path):
     path = tmp_path / "games.jsonl"
     records = [{"seq": 1, "guesses": ["SLATE"]}]
