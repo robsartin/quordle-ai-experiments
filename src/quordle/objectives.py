@@ -72,20 +72,33 @@ def _config_label(game: Game) -> str:
     model = game.get("model", "-")
     assist = game.get("assist", "-")
     parts = [p for p in (player, model, assist) if p != "-"]
-    return "/".join(parts) if parts else "-"
+    label = "/".join(parts) if parts else "-"
+    if "openers" in game:
+        label += f" · o{game['openers']}"
+    return label
+
+
+_ConfigKey = tuple[str, str, str, "int | None"]
 
 
 def compare(games: list[Game]) -> list[ConfigPanel]:
-    """Group games by solver config (player, model, assist), exclude
-    endedEarly games from scoring (but count them as skipped), and aggregate
-    each group's scored games into a ConfigPanel. Configs with zero scored
-    games are omitted. Returns panels sorted by label."""
-    groups: dict[tuple[str, str, str], list[Game]] = {}
-    skipped_counts: dict[tuple[str, str, str], int] = {}
-    labels: dict[tuple[str, str, str], str] = {}
+    """Group games by solver config (player, model, assist, openers),
+    exclude endedEarly games from scoring (but count them as skipped), and
+    aggregate each group's scored games into a ConfigPanel. `openers` is the
+    logged fixed-opener count; games without the field (pre-feature) group
+    together under None and keep their plain (suffix-free) label. Configs
+    with zero scored games are omitted. Returns panels sorted by label."""
+    groups: dict[_ConfigKey, list[Game]] = {}
+    skipped_counts: dict[_ConfigKey, int] = {}
+    labels: dict[_ConfigKey, str] = {}
 
     for game in games:
-        key = (game.get("player", "-"), game.get("model", "-"), game.get("assist", "-"))
+        key = (
+            game.get("player", "-"),
+            game.get("model", "-"),
+            game.get("assist", "-"),
+            game.get("openers"),
+        )
         labels[key] = _config_label(game)
         if game.get("endedEarly"):
             skipped_counts[key] = skipped_counts.get(key, 0) + 1

@@ -110,22 +110,53 @@ def test_append_jsonl_backs_up_existing_log(tmp_path):
 def test_build_policy_factory_heuristic():
     from quordle.runner import build_policy_factory
 
-    factory, metadata = build_policy_factory("heuristic", "none", "claude-opus-5")
+    factory, metadata = build_policy_factory("heuristic", "none", "claude-opus-5", 2)
     policy = factory()
     assert metadata["player"] == "heuristic"
+    assert metadata["openers"] == 2
     assert hasattr(policy, "choose")
 
 
 def test_build_policy_factory_claude_metadata():
     from quordle.runner import build_policy_factory
 
-    _factory, metadata = build_policy_factory("claude", "constraints", "claude-opus-5")
+    _factory, metadata = build_policy_factory("claude", "constraints", "claude-opus-5", 2)
     assert metadata == {
         "player": "claude",
         "model": "claude-opus-5",
         "assist": "constraints",
         "mode": "claude",
+        "openers": 2,
     }
+
+
+def test_build_policy_factory_passes_fixed_openers_slice_to_heuristic_policy():
+    from quordle.openers import OPENERS
+    from quordle.runner import build_policy_factory
+
+    factory, metadata = build_policy_factory("heuristic", "none", "claude-opus-5", 1)
+    policy = factory()
+    assert metadata["openers"] == 1
+    assert policy.openers == [OPENERS[0]]
+
+
+def test_build_policy_factory_passes_fixed_openers_slice_to_claude_policy():
+    from quordle.openers import OPENERS
+    from quordle.runner import build_policy_factory
+
+    factory, metadata = build_policy_factory("claude", "none", "claude-opus-5", 1)
+    policy = factory()
+    assert metadata["openers"] == 1
+    assert policy.openers == OPENERS[:1]
+
+
+def test_build_policy_factory_zero_fixed_openers_means_pure_llm():
+    from quordle.runner import build_policy_factory
+
+    factory, metadata = build_policy_factory("claude", "none", "claude-opus-5", 0)
+    policy = factory()
+    assert metadata["openers"] == 0
+    assert policy.openers == ()
 
 
 def test_env_choice_default_and_parse():
@@ -135,6 +166,15 @@ def test_env_choice_default_and_parse():
     assert parser.parse_args([]).env == "sim"
     assert parser.parse_args(["--env", "browser", "--headed"]).env == "browser"
     assert parser.parse_args(["--env", "browser", "--headed"]).headed is True
+
+
+def test_fixed_openers_arg_default_and_parse():
+    from quordle.runner import build_arg_parser
+
+    parser = build_arg_parser()
+    assert parser.parse_args([]).fixed_openers == 2
+    assert parser.parse_args(["--fixed-openers", "0"]).fixed_openers == 0
+    assert parser.parse_args(["--fixed-openers", "3"]).fixed_openers == 3
 
 
 class FakeBrowserEnv:

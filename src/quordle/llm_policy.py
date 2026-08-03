@@ -83,11 +83,17 @@ def render_prompt(
 
 class LLMPolicy:
     def __init__(
-        self, provider: LLMProvider, *, assist: Assist = Assist.NONE, max_retries: int = 2
+        self,
+        provider: LLMProvider,
+        *,
+        assist: Assist = Assist.NONE,
+        max_retries: int = 2,
+        openers: tuple[str, ...] = (),
     ) -> None:
         self.provider = provider
         self.assist = assist
         self.max_retries = max_retries
+        self.openers = openers
         self.fallback_count = 0
 
     def choose(
@@ -98,6 +104,8 @@ class LLMPolicy:
         remaining: int,
         excluded: frozenset[str] = frozenset(),
     ) -> str:
+        if len(history) < len(self.openers):
+            return self.openers[len(history)]
         prompt = render_prompt(boards, history, self.assist, remaining)
         if excluded:
             prompt += (
