@@ -137,11 +137,14 @@ def compare(games: list[Game]) -> list[ConfigPanel]:
 
 
 def _render_table(panels: list[ConfigPanel], total_skipped: int) -> str:
-    header = f"{'config':<28}{'games':>7}{'win%':>7}{'avg':>8}{'max':>7}{'first':>7}{'convex':>9}"
+    # Size the config column to the widest label so long ones (e.g.
+    # "claude/claude-sonnet-5/none · o0") don't overflow and shove the numbers.
+    w = max(len("config"), max((len(p.label) for p in panels), default=0)) + 2
+    header = f"{'config':<{w}}{'games':>7}{'win%':>7}{'avg':>8}{'max':>7}{'first':>7}{'convex':>9}"
     lines = [header, "-" * len(header)]
     for p in panels:
         lines.append(
-            f"{p.label:<28}{p.games:>7}{100 * p.win_rate:>6.0f}%"
+            f"{p.label:<{w}}{p.games:>7}{100 * p.win_rate:>6.0f}%"
             f"{p.mean_avg:>8.2f}{p.mean_max:>7.2f}{p.mean_first:>7.2f}{p.mean_convex:>9.1f}"
         )
     lines.append("-" * len(header))
