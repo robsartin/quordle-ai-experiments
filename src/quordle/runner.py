@@ -13,6 +13,7 @@ from quordle import wordlist
 from quordle.board import Board
 from quordle.engine import Environment, SimEngine, TurnFeedback
 from quordle.llm_policy import Assist, LLMPolicy
+from quordle.openers import OPENERS
 from quordle.policy import FixedOpenersThenGreedy, Policy
 from quordle.provider import ClaudeProvider
 from quordle.solver import SolveResult, solve
@@ -144,17 +145,28 @@ def next_seq(path: str) -> int:
 
 
 def build_policy_factory(
-    player: str, assist: str, model: str
-) -> tuple[Callable[[], Policy], dict[str, str]]:
+    player: str, assist: str, model: str, fixed_openers: int
+) -> tuple[Callable[[], Policy], dict[str, Any]]:
+    openers = OPENERS[:fixed_openers]
     if player == "heuristic":
-        return FixedOpenersThenGreedy, {"player": "heuristic"}
+
+        def heuristic_factory() -> Policy:
+            return FixedOpenersThenGreedy(list(openers))
+
+        return heuristic_factory, {"player": "heuristic", "openers": fixed_openers}
     if player == "claude":
         assist_level = Assist(assist)
 
-        def factory() -> Policy:
-            return LLMPolicy(ClaudeProvider(model=model), assist=assist_level)
+        def claude_factory() -> Policy:
+            return LLMPolicy(ClaudeProvider(model=model), assist=assist_level, openers=openers)
 
-        return factory, {"player": "claude", "model": model, "assist": assist, "mode": "claude"}
+        return claude_factory, {
+            "player": "claude",
+            "model": model,
+            "assist": assist,
+            "mode": "claude",
+            "openers": fixed_openers,
+        }
     raise ValueError(f"unknown player: {player!r}")
 
 
@@ -253,7 +265,7 @@ def _browser_record(
     date: str,
     answers: list[str],
     fallbacks: int,
-    metadata: dict[str, str] | None,
+    metadata: dict[str, Any] | None,
 ) -> dict[str, Any]:
     words = [
         {
@@ -291,7 +303,7 @@ def run_browser_game(
     date: str,
     allowed: frozenset[str],
     headless: bool,
-    metadata: dict[str, str] | None = None,
+    metadata: dict[str, Any] | None = None,
     env_factory: Callable[[], _MultiGameEnv] | None = None,
 ) -> dict[str, Any]:
     records = run_browser_games(
@@ -315,7 +327,7 @@ def run_browser_games(
     date: str,
     allowed: frozenset[str],
     headless: bool,
-    metadata: dict[str, str] | None = None,
+    metadata: dict[str, Any] | None = None,
     env_factory: Callable[[], _MultiGameEnv] | None = None,
     out: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -406,6 +418,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default="claude-opus-5")
     parser.add_argument("--env", choices=["sim", "browser"], default="sim")
     parser.add_argument("--headed", action="store_true")
+    parser.add_argument(
+        "--fixed-openers",
+        type=int,
+        default=2,
+        help="play this many precomputed openers with no provider call before "
+        "handing off (heuristic: greedy; claude: the LLM); 0 recovers pure-LLM",
+    )
     return parser
 
 
@@ -413,7 +432,9 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
-    factory, metadata = build_policy_factory(args.player, args.assist, args.model)
+    factory, metadata = build_policy_factory(
+        args.player, args.assist, args.model, args.fixed_openers
+    )
 
     if args.env == "browser":
         records = run_browser_games(

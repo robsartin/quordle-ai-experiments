@@ -108,6 +108,34 @@ GAME_HEURISTIC_WIN_2 = {
     ],
 }
 
+# Two configs identical except for the logged opener count -- must land in
+# separate rows once compare() groups by openers too.
+GAME_CLAUDE_OPENERS_0 = {
+    "seq": 7,
+    "date": "2026-08-02",
+    "mode": "browser",
+    "player": "claude",
+    "model": "claude-sonnet-5",
+    "assist": "none",
+    "openers": 0,
+    "won": True,
+    "totalGuessesUsed": 8,
+    "maxGuesses": 9,
+    "boardsSolved": 4,
+    "words": [
+        {"board": 1, "answer": "OMEGA", "solvedOnGuess": 4},
+        {"board": 2, "answer": "BIRCH", "solvedOnGuess": 5},
+        {"board": 3, "answer": "SMOCK", "solvedOnGuess": 7},
+        {"board": 4, "answer": "EERIE", "solvedOnGuess": 8},
+    ],
+}
+
+GAME_CLAUDE_OPENERS_2 = {
+    **GAME_CLAUDE_OPENERS_0,
+    "seq": 8,
+    "openers": 2,
+}
+
 # A group with every game endedEarly, so it should be omitted from compare()
 # but still counted in skipped.
 GAME_ALL_EARLY = {
@@ -236,6 +264,22 @@ def test_compare_aggregates_win_rate_and_means():
 
 def test_compare_returns_empty_list_for_no_games():
     assert compare([]) == []
+
+
+def test_compare_splits_configs_that_differ_only_by_openers():
+    panels = compare([GAME_CLAUDE_OPENERS_0, GAME_CLAUDE_OPENERS_2])
+    labels = {p.label for p in panels}
+    assert labels == {
+        "claude/claude-sonnet-5/none · o0",
+        "claude/claude-sonnet-5/none · o2",
+    }
+    assert len(panels) == 2
+    assert all(p.games == 1 for p in panels)
+
+
+def test_compare_record_without_openers_field_keeps_plain_label():
+    panels = compare([GAME_CLAUDE_WIN])
+    assert panels[0].label == "claude/claude-sonnet-5/none"
 
 
 def test_config_panel_is_frozen_dataclass():

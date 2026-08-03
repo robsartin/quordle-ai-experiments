@@ -8,6 +8,39 @@ ALLOWED = frozenset({"CRANE", "SLATE", "GRAPE"})
 G, Y, X = Mark.GREEN, Mark.YELLOW, Mark.GREY
 
 
+class _RaisingProvider:
+    """A provider that fails the test if the policy calls it -- proves the
+    opener shortcut skips the provider entirely for the fixed-opener turns."""
+
+    def next_guess(self, prompt: str):  # pragma: no cover -- must never run
+        raise AssertionError("provider should not be called during fixed openers")
+
+
+def test_fixed_openers_are_returned_without_calling_the_provider():
+    policy = LLMPolicy(_RaisingProvider(), openers=("SLATE", "CURIO"))
+    boards = [Board(frozenset({"CRANE", "SLATE", "GRAPE"}))]
+    assert policy.choose(boards, [], ALLOWED, remaining=9) == "SLATE"
+    history = [TurnFeedback("SLATE", [None])]
+    assert policy.choose(boards, history, ALLOWED, remaining=8) == "CURIO"
+
+
+def test_defers_to_provider_after_fixed_openers_are_exhausted():
+    policy = LLMPolicy(MockProvider(["CRANE"]), openers=("SLATE", "CURIO"))
+    boards = [Board(frozenset({"CRANE", "SLATE", "GRAPE"}))]
+    history = [
+        TurnFeedback("SLATE", [None]),
+        TurnFeedback("CURIO", [None]),
+    ]
+    assert policy.choose(boards, history, ALLOWED, remaining=7) == "CRANE"
+
+
+def test_default_openers_is_empty_and_unchanged_behavior():
+    policy = LLMPolicy(MockProvider(["CRANE"]))
+    assert policy.openers == ()
+    boards = [Board(frozenset({"CRANE", "SLATE", "GRAPE"}))]
+    assert policy.choose(boards, [], ALLOWED, remaining=9) == "CRANE"
+
+
 def test_returns_valid_provider_guess():
     policy = LLMPolicy(MockProvider(["CRANE"]))
     boards = [Board(frozenset({"CRANE", "SLATE", "GRAPE"}))]
