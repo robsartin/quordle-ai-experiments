@@ -323,6 +323,36 @@ def test_main_prints_table_with_skipped_footer(tmp_path, monkeypatch, capsys):
     assert "provisional" in captured.out.lower()
 
 
+def test_main_combines_multiple_logs_into_one_table(tmp_path, monkeypatch, capsys):
+    # Compare a "heuristic sweep" file and a "claude sweep" file side by side.
+    import json
+
+    heur = tmp_path / "heuristic.jsonl"
+    claude = tmp_path / "claude.jsonl"
+    heur.write_text(json.dumps(GAME_HEURISTIC_WIN) + "\n", encoding="utf-8")
+    claude.write_text(json.dumps(GAME_CLAUDE_WIN) + "\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["quordle-objectives", str(heur), str(claude)])
+    main()
+    out = capsys.readouterr().out
+    assert "heuristic" in out
+    assert "claude/claude-sonnet-5/none" in out
+
+
+def test_main_skips_a_missing_log_without_tracebacking(tmp_path, monkeypatch, capsys):
+    # A not-yet-created log (e.g. a sweep whose first game hasn't landed) should
+    # be skipped with a friendly note, not raise FileNotFoundError.
+    import json
+
+    real = tmp_path / "real.jsonl"
+    real.write_text(json.dumps(GAME_HEURISTIC_WIN) + "\n", encoding="utf-8")
+    missing = tmp_path / "not-there-yet.jsonl"
+    monkeypatch.setattr(sys, "argv", ["quordle-objectives", str(missing), str(real)])
+    main()  # must not raise
+    captured = capsys.readouterr()
+    assert "heuristic" in captured.out
+    assert "no log yet" in captured.err
+
+
 def test_main_exits_when_no_finished_games(tmp_path, monkeypatch):
     empty_path = tmp_path / "empty.jsonl"
     empty_path.write_text("", encoding="utf-8")

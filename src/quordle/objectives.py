@@ -154,16 +154,27 @@ def _render_table(panels: list[ConfigPanel], total_skipped: int) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("log", nargs="?", default="data/quordle_games.jsonl")
+    ap.add_argument(
+        "logs",
+        nargs="*",
+        default=["data/quordle_games.jsonl"],
+        help="one or more JSONL logs to combine into one comparison "
+        "(e.g. a heuristic sweep and a claude sweep side by side)",
+    )
     args = ap.parse_args()
 
-    games = load(args.log)
+    games: list[Game] = []
+    for path in args.logs:
+        try:
+            games.extend(load(path))
+        except FileNotFoundError:
+            print(f"(no log yet at {path} -- skipping)", file=sys.stderr)
     if not games:
-        sys.exit("No finished games in " + args.log)
+        sys.exit("No finished games in " + ", ".join(args.logs))
 
     panels = compare(games)
     if not panels:
-        sys.exit("No finished games in " + args.log)
+        sys.exit("No finished games in " + ", ".join(args.logs))
 
     total_skipped = sum(1 for g in games if g.get("endedEarly"))
     print(_render_table(panels, total_skipped))
