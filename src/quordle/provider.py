@@ -37,10 +37,17 @@ class MockProvider:
 _REQUEST_TIMEOUT_S = 150.0
 
 
+class NoStructuredOutput(Exception):
+    """Claude returned no parseable structured guess. Usually the extended
+    thinking consumed max_tokens before the JSON guess was emitted. A
+    per-call failure -- callers (the sim/browser loops) treat it as a
+    skippable game, not a crash."""
+
+
 class ClaudeProvider:
     """Claude via the official anthropic SDK, structured outputs, default claude-opus-5."""
 
-    def __init__(self, model: str = "claude-opus-5", max_tokens: int = 16000) -> None:
+    def __init__(self, model: str = "claude-opus-5", max_tokens: int = 24000) -> None:
         import anthropic
         import httpx
 
@@ -56,9 +63,11 @@ class ClaudeProvider:
             ),
         )
         self._model = model
-        # opus-5 uses extended thinking by default; max_tokens caps thinking + output.
-        # A small budget (e.g., 4096) exhausts before the structured response, leaving
-        # parsed_output=None. 16000 gives ample room for reasoning plus the JSON guess.
+        # opus-5/sonnet-5 use extended thinking by default; max_tokens caps
+        # thinking + output. Too small a budget (e.g., 4096, or 16000 under the
+        # bigger --assist candidates prompts) is exhausted by thinking before
+        # the structured response, leaving parsed_output=None. 24000 gives ample
+        # room for reasoning plus the JSON guess.
         self._max_tokens = max_tokens
 
     def next_guess(self, prompt: str) -> GuessResponse:
@@ -69,5 +78,5 @@ class ClaudeProvider:
             output_format=GuessResponse,
         )
         if response.parsed_output is None:
-            raise RuntimeError("Claude returned no structured output")
+            raise NoStructuredOutput("Claude returned no structured output")
         return response.parsed_output

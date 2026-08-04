@@ -137,6 +137,35 @@ def test_run_many_skips_a_game_interrupted_by_a_transient_api_error(tmp_path):
     assert [r["seq"] for r in records] == [1, 3]
 
 
+def test_run_many_skips_a_game_with_no_structured_output(tmp_path):
+    # A NoStructuredOutput (thinking exhausted max_tokens before the guess) is a
+    # skippable per-game failure like a stall, not a batch-crashing RuntimeError.
+    from quordle.provider import NoStructuredOutput
+
+    state = {"game": 0}
+
+    class _NoOutputPolicy:
+        def choose(self, boards, history, allowed, remaining, excluded=frozenset()):
+            raise NoStructuredOutput("Claude returned no structured output")
+
+    def factory():
+        state["game"] += 1
+        return _NoOutputPolicy() if state["game"] == 2 else FixedOpenersThenGreedy()
+
+    out = tmp_path / "games.jsonl"
+    run_many(
+        3,
+        seed=1,
+        policy_factory=factory,
+        answers=wordlist.load_answers(),
+        allowed=wordlist.load_allowed(),
+        start_seq=1,
+        date="2026-08-02",
+        out=str(out),
+    )
+    assert [json.loads(line)["seq"] for line in out.read_text().splitlines()] == [1, 3]
+
+
 def test_append_jsonl_round_trips(tmp_path):
     path = tmp_path / "games.jsonl"
     records = [{"seq": 1, "guesses": ["SLATE"]}]
@@ -394,6 +423,36 @@ def test_browser_game_ends_gracefully_on_api_timeout():
     assert record["guesses"] == ["CRANE"]
     assert record["totalGuessesUsed"] == 1
     assert record["boardsSolved"] == 0
+    assert record["won"] is False
+
+
+def test_browser_game_ends_gracefully_on_no_structured_output():
+    # A NoStructuredOutput (thinking exhausted max_tokens) mid-browser-game ends
+    # the game with a partial record, same as a stall -- it must not crash.
+    from quordle.provider import NoStructuredOutput
+
+    class _NoOutputOnGuess2:
+        def __init__(self):
+            self._calls = 0
+
+        def choose(self, boards, history, allowed, remaining, excluded=frozenset()):
+            self._calls += 1
+            if self._calls == 2:
+                raise NoStructuredOutput("Claude returned no structured output")
+            return "CRANE"
+
+    allowed = frozenset({"CRANE", "SLATE"})
+    env = FakeBrowserEnv("SLATE", allowed)
+    record = run_browser_game(
+        _NoOutputOnGuess2(),
+        seq=8,
+        date="2026-08-02",
+        allowed=allowed,
+        headless=True,
+        env_factory=lambda: env,
+    )
+    assert record["endedEarly"] is True
+    assert record["guesses"] == ["CRANE"]
     assert record["won"] is False
 
 
