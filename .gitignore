@@ -22,4 +22,6 @@ env/
 .coverage
 .python-version
 doit.sh
-overnight.log
+# ad-hoc run logs and CSV dumps (harness CSV goes to stdout, not the repo)
+*.log
+*.csv
