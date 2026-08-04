@@ -146,7 +146,7 @@ def _render_table(panels: list[ConfigPanel], total_skipped: int) -> str:
     lines = [header, "-" * len(header)]
     for p in panels:
         lines.append(
-            f"{p.label:<{w}}{p.games:>7}{100 * p.win_rate:>6.0f}%"
+            f"{p.label:<{w}}{p.games:>7}{100 * p.win_rate:>6.1f}%"
             f"{p.mean_avg:>8.2f}{p.mean_max:>7.2f}{p.mean_first:>7.2f}{p.mean_convex:>9.1f}"
         )
     lines.append("-" * len(header))
