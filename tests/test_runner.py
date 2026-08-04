@@ -241,6 +241,43 @@ def test_build_policy_factory_zero_fixed_openers_means_pure_llm():
     assert policy.openers == ()
 
 
+def test_build_policy_factory_gemini_metadata_and_provider(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")  # GeminiProvider ctor needs a key
+    from quordle.gemini_provider import GeminiProvider
+    from quordle.llm_policy import LLMPolicy
+    from quordle.runner import build_policy_factory
+
+    factory, metadata = build_policy_factory("gemini", "none", None, 2)
+    assert metadata == {
+        "player": "gemini",
+        "model": "gemini-2.5-flash",
+        "assist": "none",
+        "mode": "gemini",
+        "openers": 2,
+    }
+    policy = factory()
+    assert isinstance(policy, LLMPolicy)
+    assert isinstance(policy.provider, GeminiProvider)
+
+
+def test_build_policy_factory_claude_default_model_is_sonnet():
+    from quordle.provider import ClaudeProvider
+    from quordle.runner import build_policy_factory
+
+    # model=None now resolves to the per-player default; claude -> sonnet-5.
+    factory, metadata = build_policy_factory("claude", "none", None, 2)
+    assert metadata["model"] == "claude-sonnet-5"
+    assert isinstance(factory().provider, ClaudeProvider)  # ctor offline, no key
+
+
+def test_arg_parser_includes_gemini_and_model_default_none():
+    from quordle.runner import build_arg_parser
+
+    args = build_arg_parser().parse_args(["--player", "gemini"])
+    assert args.player == "gemini"
+    assert args.model is None
+
+
 def test_env_choice_default_and_parse():
     from quordle.runner import build_arg_parser
 

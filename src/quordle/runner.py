@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from quordle import wordlist
 from quordle.board import Board
 from quordle.engine import Environment, SimEngine, TurnFeedback
+from quordle.gemini_provider import GeminiProvider
 from quordle.llm_policy import Assist, LLMPolicy
 from quordle.openers import OPENERS
 from quordle.policy import FixedOpenersThenGreedy, Policy
@@ -164,7 +165,7 @@ def next_seq(path: str) -> int:
 
 
 def build_policy_factory(
-    player: str, assist: str, model: str, fixed_openers: int
+    player: str, assist: str, model: str | None, fixed_openers: int
 ) -> tuple[Callable[[], Policy], dict[str, Any]]:
     openers = OPENERS[:fixed_openers]
     if player == "heuristic":
@@ -175,15 +176,30 @@ def build_policy_factory(
         return heuristic_factory, {"player": "heuristic", "openers": fixed_openers}
     if player == "claude":
         assist_level = Assist(assist)
+        resolved = model or "claude-sonnet-5"
 
         def claude_factory() -> Policy:
-            return LLMPolicy(ClaudeProvider(model=model), assist=assist_level, openers=openers)
+            return LLMPolicy(ClaudeProvider(model=resolved), assist=assist_level, openers=openers)
 
         return claude_factory, {
             "player": "claude",
-            "model": model,
+            "model": resolved,
             "assist": assist,
             "mode": "claude",
+            "openers": fixed_openers,
+        }
+    if player == "gemini":
+        assist_level = Assist(assist)
+        resolved = model or "gemini-2.5-flash"
+
+        def gemini_factory() -> Policy:
+            return LLMPolicy(GeminiProvider(model=resolved), assist=assist_level, openers=openers)
+
+        return gemini_factory, {
+            "player": "gemini",
+            "model": resolved,
+            "assist": assist,
+            "mode": "gemini",
             "openers": fixed_openers,
         }
     raise ValueError(f"unknown player: {player!r}")
@@ -432,9 +448,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", default=DEFAULT_LOG)
     parser.add_argument("--date", default="2026-08-01")
-    parser.add_argument("--player", choices=["heuristic", "claude"], default="heuristic")
+    parser.add_argument("--player", choices=["heuristic", "claude", "gemini"], default="heuristic")
     parser.add_argument("--assist", choices=["none", "constraints", "candidates"], default="none")
-    parser.add_argument("--model", default="claude-opus-5")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="model id; defaults per player (claude: claude-sonnet-5, gemini: gemini-2.5-flash)",
+    )
     parser.add_argument("--env", choices=["sim", "browser"], default="sim")
     parser.add_argument("--headed", action="store_true")
     parser.add_argument(
