@@ -456,12 +456,12 @@ def test_short_label_maps_opus_and_gemini_models():
 
     assert _short_label("claude", "claude-opus-5", "none", 0) == "o0"
     assert _short_label("claude", "claude-opus-5", "candidates", 0) == "O0"
-    assert _short_label("gemini", "gemini-2.5-flash", "none", 1) == "g1"
-    assert _short_label("gemini", "gemini-2.5-flash", "candidates", 1) == "G1"
-    assert _short_label("gemini", "gemini-2.5-flash-lite", "none", None) == "f"
-    assert _short_label("gemini", "gemini-2.5-flash-lite", "candidates", 2) == "F2"
-    assert _short_label("gemini", "gemini-2.5-pro", "none", 3) == "p3"
-    assert _short_label("gemini", "gemini-2.5-pro", "candidates", 3) == "P3"
+    assert _short_label("gemini", "gemini-3.5-flash", "none", 1) == "g1"
+    assert _short_label("gemini", "gemini-3.5-flash", "candidates", 1) == "G1"
+    assert _short_label("gemini", "gemini-3.5-flash-lite", "none", None) == "f"
+    assert _short_label("gemini", "gemini-3.5-flash-lite", "candidates", 2) == "F2"
+    assert _short_label("gemini", "gemini-3.1-pro-preview", "none", 3) == "p3"
+    assert _short_label("gemini", "gemini-3.1-pro-preview", "candidates", 3) == "P3"
 
 
 def test_short_label_opus_no_longer_collides_with_sonnet():

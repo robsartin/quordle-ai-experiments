@@ -295,7 +295,7 @@ def test_build_policy_factory_gemini_metadata_and_provider(monkeypatch):
     factory, metadata = build_policy_factory("gemini", "none", None, 2)
     assert metadata == {
         "player": "gemini",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.5-flash",
         "assist": "none",
         "mode": "gemini",
         "openers": 2,

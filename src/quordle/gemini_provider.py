@@ -7,9 +7,9 @@ from quordle.provider import _REQUEST_TIMEOUT_S, GuessResponse, NoStructuredOutp
 
 class GeminiProvider:
     """Gemini via the official google-genai SDK, native structured output,
-    default gemini-2.5-flash."""
+    default gemini-3.5-flash."""
 
-    def __init__(self, model: str = "gemini-2.5-flash") -> None:
+    def __init__(self, model: str = "gemini-3.5-flash") -> None:
         from google import genai
         from google.genai import types
 

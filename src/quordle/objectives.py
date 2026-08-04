@@ -76,16 +76,17 @@ class ConfigPanel:
 #   h        heuristic
 #   c / C    claude sonnet-5   (base / + candidates)
 #   o / O    claude opus-5
-#   g / G    gemini 2.5-flash
-#   f / F    gemini 2.5-flash-lite
-#   p / P    gemini 2.5-pro
+#   g / G    gemini 3.5-flash
+#   f / F    gemini 3.5-flash-lite
+#   p / P    gemini 3.1-pro-preview
+# (The 2.5-era models are walled off for new API keys, so we pin the 3.x line.)
 _BASE_CODE: dict[tuple[str, str], str] = {
     ("heuristic", "-"): "h",
     ("claude", "claude-sonnet-5"): "c",
     ("claude", "claude-opus-5"): "o",
-    ("gemini", "gemini-2.5-flash"): "g",
-    ("gemini", "gemini-2.5-flash-lite"): "f",
-    ("gemini", "gemini-2.5-pro"): "p",
+    ("gemini", "gemini-3.5-flash"): "g",
+    ("gemini", "gemini-3.5-flash-lite"): "f",
+    ("gemini", "gemini-3.1-pro-preview"): "p",
 }
 
 

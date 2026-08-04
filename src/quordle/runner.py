@@ -202,7 +202,7 @@ def build_policy_factory(
         }
     if player == "gemini":
         assist_level = Assist(assist)
-        resolved = model or "gemini-2.5-flash"
+        resolved = model or "gemini-3.5-flash"
 
         def gemini_factory() -> Policy:
             return LLMPolicy(GeminiProvider(model=resolved), assist=assist_level, openers=openers)
@@ -463,7 +463,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default=None,
-        help="model id; defaults per player (claude: claude-sonnet-5, gemini: gemini-2.5-flash)",
+        help="model id; defaults per player (claude: claude-sonnet-5, gemini: gemini-3.5-flash)",
     )
     parser.add_argument("--env", choices=["sim", "browser"], default="sim")
     parser.add_argument("--headed", action="store_true")

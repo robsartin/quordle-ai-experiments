@@ -4,6 +4,15 @@
 - **Date:** 2026-08-04
 - **Depends on / implements:** [ADR 0017](../../adr/0017-llm-backed-policy-and-providers.md)
 
+> **Update (2026-08-04, post-implementation):** live testing showed the
+> `gemini-2.5-*` models are walled off for new API keys ("no longer available
+> to new users"), and `gemini-2.5-flash-lite` plays Quordle poorly (0/4).
+> The default and short codes were repointed to the current 3.x line:
+> default **`gemini-3.5-flash`**; short codes `g`=`gemini-3.5-flash`,
+> `f`=`gemini-3.5-flash-lite`, `p`=`gemini-3.1-pro-preview`. All other
+> mentions of `gemini-2.5-flash` below reflect the original design and should
+> be read as `gemini-3.5-flash`.
+
 ## Goal
 
 Let Gemini play Quordle as an `LLMPolicy`, exactly like Claude, so

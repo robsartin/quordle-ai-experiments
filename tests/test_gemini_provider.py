@@ -9,7 +9,7 @@ def test_gemini_provider_default_model_is_flash(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")  # ctor needs a key present
     from quordle.gemini_provider import GeminiProvider
 
-    assert GeminiProvider()._model == "gemini-2.5-flash"
+    assert GeminiProvider()._model == "gemini-3.5-flash"
 
 
 def test_gemini_provider_read_timeout_is_bounded(monkeypatch):
