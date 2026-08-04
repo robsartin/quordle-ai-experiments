@@ -23,7 +23,7 @@ DEFAULT_LOG = "data/quordle_games.jsonl"
 MAX_REJECT_RETRIES = 3
 
 
-def _transient_error_types() -> tuple[type[BaseException], ...]:
+def _transient_error_types() -> tuple[type[Exception], ...]:
     """Per-call failures a multi-game sweep should skip (not crash on): a
     provider connection/timeout stall and no-structured-output. Auth / 4xx /
     bad-request errors (anthropic.APIStatusError, google.genai ClientError) are
@@ -269,7 +269,6 @@ def _play_browser_game(
                     excluded=frozenset(excluded),
                 )
             except _transient_error_types() as exc:
-                assert isinstance(exc, Exception)  # all caught types are Exception subclasses
                 return SolveResult(guesses, solved_on), exc
             try:
                 result = env.submit(guess)
