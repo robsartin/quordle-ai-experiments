@@ -70,15 +70,22 @@ class ConfigPanel:
     short_label: str = ""
 
 
-# Compact per-config codes for CSV output: a base letter identifies the
-# player/model, uppercased when the candidates assist is on, then the
+# Compact per-config codes for CSV output: a lowercase base letter identifies
+# the player/model, uppercased when the candidates assist is on, then the
 # fixed-opener count. Extend _BASE_CODE as more models are added.
-#   h0..h3  heuristic
-#   c0..c3  claude sonnet (assist none)
-#   C0..C3  claude sonnet with candidates
+#   h        heuristic
+#   c / C    claude sonnet-5   (base / + candidates)
+#   o / O    claude opus-5
+#   g / G    gemini 2.5-flash
+#   f / F    gemini 2.5-flash-lite
+#   p / P    gemini 2.5-pro
 _BASE_CODE: dict[tuple[str, str], str] = {
     ("heuristic", "-"): "h",
     ("claude", "claude-sonnet-5"): "c",
+    ("claude", "claude-opus-5"): "o",
+    ("gemini", "gemini-2.5-flash"): "g",
+    ("gemini", "gemini-2.5-flash-lite"): "f",
+    ("gemini", "gemini-2.5-pro"): "p",
 }
 
 

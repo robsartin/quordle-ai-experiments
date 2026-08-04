@@ -448,7 +448,29 @@ def test_short_label_falls_back_to_player_initial_for_unmapped_model():
     from quordle.objectives import _short_label
 
     # a model not yet in the table still gets a stable code (extensible later)
-    assert _short_label("gemini", "gemini-2.5-pro", "none", 1) == "g1"
+    assert _short_label("gemini", "gemini-3.0-pro", "none", 1) == "g1"
+
+
+def test_short_label_maps_opus_and_gemini_models():
+    from quordle.objectives import _short_label
+
+    assert _short_label("claude", "claude-opus-5", "none", 0) == "o0"
+    assert _short_label("claude", "claude-opus-5", "candidates", 0) == "O0"
+    assert _short_label("gemini", "gemini-2.5-flash", "none", 1) == "g1"
+    assert _short_label("gemini", "gemini-2.5-flash", "candidates", 1) == "G1"
+    assert _short_label("gemini", "gemini-2.5-flash-lite", "none", None) == "f"
+    assert _short_label("gemini", "gemini-2.5-flash-lite", "candidates", 2) == "F2"
+    assert _short_label("gemini", "gemini-2.5-pro", "none", 3) == "p3"
+    assert _short_label("gemini", "gemini-2.5-pro", "candidates", 3) == "P3"
+
+
+def test_short_label_opus_no_longer_collides_with_sonnet():
+    from quordle.objectives import _short_label
+
+    # Before this task opus-5 was unmapped and fell back to the player initial
+    # "c", colliding with sonnet-5. Explicit "o" separates them.
+    assert _short_label("claude", "claude-sonnet-5", "none", 0) == "c0"
+    assert _short_label("claude", "claude-opus-5", "none", 0) == "o0"
 
 
 def test_compare_populates_short_label_for_each_config():
