@@ -12,6 +12,8 @@ docs/superpowers/specs/2026-08-02-objective-harness-design.md for the design.
 """
 
 import argparse
+import csv
+import io
 import sys
 from dataclasses import dataclass
 
@@ -155,6 +157,26 @@ def _render_table(panels: list[ConfigPanel], total_skipped: int) -> str:
     return "\n".join(lines)
 
 
+def _render_csv(panels: list[ConfigPanel]) -> str:
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["config", "games", "skipped", "win_pct", "avg", "max", "first", "convex"])
+    for p in panels:
+        writer.writerow(
+            [
+                p.label,
+                p.games,
+                p.skipped,
+                round(100 * p.win_rate, 1),
+                round(p.mean_avg, 2),
+                round(p.mean_max, 2),
+                round(p.mean_first, 2),
+                round(p.mean_convex, 1),
+            ]
+        )
+    return buf.getvalue().rstrip("\n")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -164,6 +186,7 @@ def main() -> None:
         help="one or more JSONL logs to combine into one comparison "
         "(e.g. a heuristic sweep and a claude sweep side by side)",
     )
+    ap.add_argument("--csv", action="store_true", help="output CSV instead of the text table")
     args = ap.parse_args()
 
     games: list[Game] = []
@@ -178,6 +201,10 @@ def main() -> None:
     panels = compare(games)
     if not panels:
         sys.exit("No finished games in " + ", ".join(args.logs))
+
+    if args.csv:
+        print(_render_csv(panels))
+        return
 
     total_skipped = sum(1 for g in games if g.get("endedEarly"))
     print(_render_table(panels, total_skipped))
