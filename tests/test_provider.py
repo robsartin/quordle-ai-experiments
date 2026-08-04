@@ -27,6 +27,15 @@ def test_claude_provider_returns_a_five_letter_word():
     assert len(resp.guess.strip()) == 5
 
 
+def test_claude_provider_default_model_is_sonnet():
+    from quordle.provider import ClaudeProvider
+
+    # Default flipped to sonnet-5 (issue #5): the everyday comparison model,
+    # matching the runner's per-player default. Constructed offline (no key
+    # needed at construction for the anthropic SDK).
+    assert ClaudeProvider()._model == "claude-sonnet-5"
+
+
 def test_claude_provider_default_max_tokens_is_generous():
     from quordle.provider import ClaudeProvider
 
