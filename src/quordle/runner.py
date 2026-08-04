@@ -15,7 +15,7 @@ from quordle.engine import Environment, SimEngine, TurnFeedback
 from quordle.llm_policy import Assist, LLMPolicy
 from quordle.openers import OPENERS
 from quordle.policy import FixedOpenersThenGreedy, Policy
-from quordle.provider import ClaudeProvider
+from quordle.provider import ClaudeProvider, NoStructuredOutput
 from quordle.solver import SolveResult, solve
 
 DEFAULT_LOG = "data/quordle_games.jsonl"
@@ -128,7 +128,7 @@ def run_many(
                 allowed=allowed,
                 metadata=metadata,
             )
-        except APIConnectionError as exc:
+        except (APIConnectionError, NoStructuredOutput) as exc:
             print(f"Sim game {seq} interrupted by a transient API error ({exc!r}); skipping.")
             continue
         records.append(record)
@@ -215,10 +215,10 @@ def _play_browser_game(
     unattended multi-game loop keeps going to the next game instead of
     crashing.
 
-    Only transient connection/timeout errors are caught (APIConnectionError,
-    which covers APITimeoutError); auth/bad-request errors propagate, since
-    those are real bugs that should fail loudly rather than silently ending
-    every game.
+    Only per-call transient failures are caught: APIConnectionError (covering
+    APITimeoutError) and NoStructuredOutput (thinking exhausted max_tokens
+    before a guess). Auth/bad-request errors propagate, since those are real
+    bugs that should fail loudly rather than silently ending every game.
     """
     from anthropic import APIConnectionError
 
@@ -242,7 +242,7 @@ def _play_browser_game(
                     env.remaining_guesses(),
                     excluded=frozenset(excluded),
                 )
-            except APIConnectionError as exc:
+            except (APIConnectionError, NoStructuredOutput) as exc:
                 return SolveResult(guesses, solved_on), exc
             try:
                 result = env.submit(guess)

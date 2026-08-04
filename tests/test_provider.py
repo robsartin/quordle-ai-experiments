@@ -33,7 +33,23 @@ def test_claude_provider_default_max_tokens_is_generous():
     # opus-5 thinks by default; the token budget must leave room for the
     # structured output after thinking. Construct offline (no network on ctor).
     provider = ClaudeProvider()
-    assert provider._max_tokens >= 16000
+    assert provider._max_tokens >= 24000  # bumped so bigger --assist prompts still leave room
+
+
+def test_claude_provider_raises_no_structured_output_on_unparseable(monkeypatch):
+    from quordle.provider import ClaudeProvider, NoStructuredOutput
+
+    # When thinking exhausts max_tokens before the guess, parsed_output is None.
+    # The provider must raise the dedicated NoStructuredOutput (a skippable
+    # per-call failure), not a bare RuntimeError that crashes a batch. Offline.
+    provider = ClaudeProvider()
+
+    class _Resp:
+        parsed_output = None
+
+    monkeypatch.setattr(provider._client.messages, "parse", lambda **kw: _Resp())
+    with pytest.raises(NoStructuredOutput):
+        provider.next_guess("anything")
 
 
 def test_claude_provider_read_timeout_covers_thinking_but_is_bounded():
