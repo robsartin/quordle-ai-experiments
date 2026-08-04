@@ -11,6 +11,7 @@ license = "Apache-2.0"
 dependencies = [
     "matplotlib>=3.5",
     "anthropic>=0.40",
+    "google-genai>=1.0",
     "pydantic>=2",
     "playwright>=1.40",
 ]
