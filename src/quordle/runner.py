@@ -23,6 +23,20 @@ DEFAULT_LOG = "data/quordle_games.jsonl"
 MAX_REJECT_RETRIES = 3
 
 
+def _transient_error_types() -> tuple[type[BaseException], ...]:
+    """Per-call failures a multi-game sweep should skip (not crash on): a
+    provider connection/timeout stall and no-structured-output. Auth / 4xx /
+    bad-request errors (anthropic.APIStatusError, google.genai ClientError) are
+    deliberately NOT included -- those are real bugs that must fail loudly
+    rather than silently skip every game. Imported lazily to keep module import
+    light, matching the existing per-loop import style."""
+    import httpx
+    from anthropic import APIConnectionError
+    from google.genai import errors as genai_errors
+
+    return (APIConnectionError, NoStructuredOutput, genai_errors.ServerError, httpx.TransportError)
+
+
 class _ContextEnv(Environment, Protocol):
     """An Environment that's also its own context manager, like BrowserEnv.
 
@@ -113,8 +127,6 @@ def run_many(
     an out-of-credits error still propagates loudly) is skipped and the batch
     continues, instead of one stall crashing a multi-hour sweep.
     """
-    from anthropic import APIConnectionError
-
     rng = random.Random(seed)
     records: list[dict[str, Any]] = []
     for offset in range(count):
@@ -129,7 +141,7 @@ def run_many(
                 allowed=allowed,
                 metadata=metadata,
             )
-        except (APIConnectionError, NoStructuredOutput) as exc:
+        except _transient_error_types() as exc:
             print(f"Sim game {seq} interrupted by a transient API error ({exc!r}); skipping.")
             continue
         records.append(record)
@@ -236,8 +248,6 @@ def _play_browser_game(
     before a guess). Auth/bad-request errors propagate, since those are real
     bugs that should fail loudly rather than silently ending every game.
     """
-    from anthropic import APIConnectionError
-
     from quordle.browser.browser_env import GuessRejected
 
     full = frozenset(w.upper() for w in answers)
@@ -258,7 +268,8 @@ def _play_browser_game(
                     env.remaining_guesses(),
                     excluded=frozenset(excluded),
                 )
-            except (APIConnectionError, NoStructuredOutput) as exc:
+            except _transient_error_types() as exc:
+                assert isinstance(exc, Exception)  # all caught types are Exception subclasses
                 return SolveResult(guesses, solved_on), exc
             try:
                 result = env.submit(guess)

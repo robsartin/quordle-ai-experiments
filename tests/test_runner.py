@@ -166,6 +166,51 @@ def test_run_many_skips_a_game_with_no_structured_output(tmp_path):
     assert [json.loads(line)["seq"] for line in out.read_text().splitlines()] == [1, 3]
 
 
+def test_run_many_skips_game_on_gemini_server_error():
+    from google.genai import errors as genai_errors
+
+    from quordle import wordlist
+    from quordle.runner import run_many
+
+    class _BoomPolicy:
+        def choose(self, *args, **kwargs):
+            raise genai_errors.ServerError(503, {"error": {"message": "overloaded"}})
+
+    records = run_many(
+        1,
+        seed=0,
+        policy_factory=lambda: _BoomPolicy(),
+        answers=wordlist.load_answers(),
+        allowed=wordlist.load_allowed(),
+        start_seq=1,
+        date="2026-08-04",
+    )
+    assert records == []  # transient 5xx -> game skipped, batch survives
+
+
+def test_run_many_reraises_on_gemini_client_error():
+    import pytest
+    from google.genai import errors as genai_errors
+
+    from quordle import wordlist
+    from quordle.runner import run_many
+
+    class _AuthBoom:
+        def choose(self, *args, **kwargs):
+            raise genai_errors.ClientError(400, {"error": {"message": "bad key"}})
+
+    with pytest.raises(genai_errors.ClientError):  # 4xx must fail loudly, not skip
+        run_many(
+            1,
+            seed=0,
+            policy_factory=lambda: _AuthBoom(),
+            answers=wordlist.load_answers(),
+            allowed=wordlist.load_allowed(),
+            start_seq=1,
+            date="2026-08-04",
+        )
+
+
 def test_append_jsonl_round_trips(tmp_path):
     path = tmp_path / "games.jsonl"
     records = [{"seq": 1, "guesses": ["SLATE"]}]
