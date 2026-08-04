@@ -379,6 +379,43 @@ def test_main_skips_a_missing_log_without_tracebacking(tmp_path, monkeypatch, ca
     assert "no log yet" in captured.err
 
 
+def test_render_csv_has_header_and_a_parseable_row():
+    import csv as _csv
+
+    from quordle.objectives import _render_csv
+
+    p = ConfigPanel(
+        label="claude/claude-sonnet-5/none · o0",
+        games=23,
+        skipped=1,
+        win_rate=21 / 23,  # 91.30%
+        mean_avg=5.783,
+        mean_max=7.74,
+        mean_first=4.04,
+        mean_convex=149.7,
+    )
+    lines = _render_csv([p]).splitlines()
+    assert lines[0] == "config,games,skipped,win_pct,avg,max,first,convex"
+    row = next(_csv.reader(lines[1:]))
+    assert row[0] == "claude/claude-sonnet-5/none · o0"
+    assert row[1] == "23" and row[2] == "1"
+    assert row[3] == "91.3"  # win_pct rounded to one decimal
+    assert row[4] == "5.78"  # avg rounded to two decimals
+
+
+def test_main_csv_flag_outputs_csv_not_table(tmp_path, monkeypatch, capsys):
+    import json
+
+    path = tmp_path / "g.jsonl"
+    path.write_text(json.dumps(GAME_HEURISTIC_WIN) + "\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["quordle-objectives", "--csv", str(path)])
+    main()
+    out = capsys.readouterr().out
+    assert out.startswith("config,games,skipped,win_pct,avg,max,first,convex")
+    assert "heuristic" in out
+    assert "convex is a provisional" not in out  # the table footer, absent in CSV mode
+
+
 def test_main_exits_when_no_finished_games(tmp_path, monkeypatch):
     empty_path = tmp_path / "empty.jsonl"
     empty_path.write_text("", encoding="utf-8")
