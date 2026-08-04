@@ -472,7 +472,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="play this many precomputed openers with no provider call before "
-        "handing off (heuristic: greedy; claude: the LLM); 0 recovers pure-LLM",
+        "handing off (heuristic: greedy; claude/gemini: the LLM); 0 recovers pure-LLM",
     )
     return parser
 
