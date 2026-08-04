@@ -1,0 +1,9 @@
+config,games,win_pct,avg,max,first,convex
+claude/claude-sonnet-5/none · o0,23,91.3,5.87,7.74,4.04,149.7
+claude/claude-sonnet-5/none · o1,24,95.8,5.83,7.79,3.71,149.3
+claude/claude-sonnet-5/none · o2,25,92.0,6.01,7.76,4.16,156.5
+claude/claude-sonnet-5/none · o3,25,92.0,5.97,7.72,4.16,151.7
+heuristic · o0,25,100.0,5.10,7.04,3.20,113.9
+heuristic · o1,25,96.0,5.42,7.44,3.36,128.9
+heuristic · o2,25,100.0,5.30,7.24,3.40,122.3
+heuristic · o3,25,100.0,5.66,7.40,4.00,135.0

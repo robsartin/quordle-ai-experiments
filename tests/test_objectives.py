@@ -405,6 +405,7 @@ def test_render_csv_has_header_and_a_parseable_row():
 
     p = ConfigPanel(
         label="claude/claude-sonnet-5/none · o0",
+        short_label="c0",
         games=23,
         skipped=1,
         win_rate=21 / 23,  # 91.30%
@@ -416,10 +417,43 @@ def test_render_csv_has_header_and_a_parseable_row():
     lines = _render_csv([p]).splitlines()
     assert lines[0] == "config,games,skipped,win_pct,avg,max,first,convex"
     row = next(_csv.reader(lines[1:]))
-    assert row[0] == "claude/claude-sonnet-5/none · o0"
+    assert row[0] == "c0"  # compact code, not the long label
     assert row[1] == "23" and row[2] == "1"
     assert row[3] == "91.3"  # win_pct rounded to one decimal
     assert row[4] == "5.78"  # avg rounded to two decimals
+
+
+# ---- short config codes (CSV) ----------------------------------------------
+
+
+def test_short_label_maps_known_configs_to_compact_codes():
+    from quordle.objectives import _short_label
+
+    # letter = player/model, uppercased for the candidates assist, + opener count
+    assert _short_label("heuristic", "-", "-", 0) == "h0"
+    assert _short_label("claude", "claude-sonnet-5", "none", 0) == "c0"
+    assert _short_label("claude", "claude-sonnet-5", "candidates", 0) == "C0"
+    assert _short_label("claude", "claude-sonnet-5", "none", 3) == "c3"
+
+
+def test_short_label_omits_digit_when_no_openers():
+    from quordle.objectives import _short_label
+
+    # pre-openers games (no logged count) keep the bare letter, no digit
+    assert _short_label("claude", "claude-sonnet-5", "none", None) == "c"
+    assert _short_label("heuristic", "-", "-", None) == "h"
+
+
+def test_short_label_falls_back_to_player_initial_for_unmapped_model():
+    from quordle.objectives import _short_label
+
+    # a model not yet in the table still gets a stable code (extensible later)
+    assert _short_label("gemini", "gemini-2.5-pro", "none", 1) == "g1"
+
+
+def test_compare_populates_short_label_for_each_config():
+    panels = compare([GAME_CLAUDE_OPENERS_0, GAME_CLAUDE_OPENERS_2])
+    assert {p.short_label for p in panels} == {"c0", "c2"}
 
 
 def test_main_csv_flag_outputs_csv_not_table(tmp_path, monkeypatch, capsys):
@@ -431,7 +465,8 @@ def test_main_csv_flag_outputs_csv_not_table(tmp_path, monkeypatch, capsys):
     main()
     out = capsys.readouterr().out
     assert out.startswith("config,games,skipped,win_pct,avg,max,first,convex")
-    assert "heuristic" in out
+    assert "\nh," in out  # heuristic's compact code (no openers field -> just "h")
+    assert "heuristic" not in out  # the long name is replaced by the code in CSV
     assert "convex is a provisional" not in out  # the table footer, absent in CSV mode
 
 

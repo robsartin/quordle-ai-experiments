@@ -67,6 +67,26 @@ class ConfigPanel:
     mean_max: float
     mean_first: float
     mean_convex: float
+    short_label: str = ""
+
+
+# Compact per-config codes for CSV output: a base letter identifies the
+# player/model, uppercased when the candidates assist is on, then the
+# fixed-opener count. Extend _BASE_CODE as more models are added.
+#   h0..h3  heuristic
+#   c0..c3  claude sonnet (assist none)
+#   C0..C3  claude sonnet with candidates
+_BASE_CODE: dict[tuple[str, str], str] = {
+    ("heuristic", "-"): "h",
+    ("claude", "claude-sonnet-5"): "c",
+}
+
+
+def _short_label(player: str, model: str, assist: str, openers: int | None) -> str:
+    base = _BASE_CODE.get((player, model), player[:1].lower())
+    if assist == "candidates":
+        base = base.upper()
+    return base if openers is None else f"{base}{openers}"
 
 
 def _config_label(game: Game) -> str:
@@ -121,6 +141,7 @@ def compare(games: list[Game]) -> list[ConfigPanel]:
         panels.append(
             ConfigPanel(
                 label=labels[key],
+                short_label=_short_label(*key),
                 games=n,
                 skipped=skipped_counts.get(key, 0),
                 win_rate=wins / n,
@@ -164,7 +185,7 @@ def _render_csv(panels: list[ConfigPanel]) -> str:
     for p in panels:
         writer.writerow(
             [
-                p.label,
+                p.short_label,
                 p.games,
                 p.skipped,
                 round(100 * p.win_rate, 1),
