@@ -166,6 +166,51 @@ def test_run_many_skips_a_game_with_no_structured_output(tmp_path):
     assert [json.loads(line)["seq"] for line in out.read_text().splitlines()] == [1, 3]
 
 
+def test_run_many_skips_game_on_gemini_server_error():
+    from google.genai import errors as genai_errors
+
+    from quordle import wordlist
+    from quordle.runner import run_many
+
+    class _BoomPolicy:
+        def choose(self, *args, **kwargs):
+            raise genai_errors.ServerError(503, {"error": {"message": "overloaded"}})
+
+    records = run_many(
+        1,
+        seed=0,
+        policy_factory=lambda: _BoomPolicy(),
+        answers=wordlist.load_answers(),
+        allowed=wordlist.load_allowed(),
+        start_seq=1,
+        date="2026-08-04",
+    )
+    assert records == []  # transient 5xx -> game skipped, batch survives
+
+
+def test_run_many_reraises_on_gemini_client_error():
+    import pytest
+    from google.genai import errors as genai_errors
+
+    from quordle import wordlist
+    from quordle.runner import run_many
+
+    class _AuthBoom:
+        def choose(self, *args, **kwargs):
+            raise genai_errors.ClientError(400, {"error": {"message": "bad key"}})
+
+    with pytest.raises(genai_errors.ClientError):  # 4xx must fail loudly, not skip
+        run_many(
+            1,
+            seed=0,
+            policy_factory=lambda: _AuthBoom(),
+            answers=wordlist.load_answers(),
+            allowed=wordlist.load_allowed(),
+            start_seq=1,
+            date="2026-08-04",
+        )
+
+
 def test_append_jsonl_round_trips(tmp_path):
     path = tmp_path / "games.jsonl"
     records = [{"seq": 1, "guesses": ["SLATE"]}]
@@ -239,6 +284,43 @@ def test_build_policy_factory_zero_fixed_openers_means_pure_llm():
     policy = factory()
     assert metadata["openers"] == 0
     assert policy.openers == ()
+
+
+def test_build_policy_factory_gemini_metadata_and_provider(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")  # GeminiProvider ctor needs a key
+    from quordle.gemini_provider import GeminiProvider
+    from quordle.llm_policy import LLMPolicy
+    from quordle.runner import build_policy_factory
+
+    factory, metadata = build_policy_factory("gemini", "none", None, 2)
+    assert metadata == {
+        "player": "gemini",
+        "model": "gemini-3.5-flash",
+        "assist": "none",
+        "mode": "gemini",
+        "openers": 2,
+    }
+    policy = factory()
+    assert isinstance(policy, LLMPolicy)
+    assert isinstance(policy.provider, GeminiProvider)
+
+
+def test_build_policy_factory_claude_default_model_is_sonnet():
+    from quordle.provider import ClaudeProvider
+    from quordle.runner import build_policy_factory
+
+    # model=None now resolves to the per-player default; claude -> sonnet-5.
+    factory, metadata = build_policy_factory("claude", "none", None, 2)
+    assert metadata["model"] == "claude-sonnet-5"
+    assert isinstance(factory().provider, ClaudeProvider)  # ctor offline, no key
+
+
+def test_arg_parser_includes_gemini_and_model_default_none():
+    from quordle.runner import build_arg_parser
+
+    args = build_arg_parser().parse_args(["--player", "gemini"])
+    assert args.player == "gemini"
+    assert args.model is None
 
 
 def test_env_choice_default_and_parse():

@@ -45,9 +45,9 @@ class NoStructuredOutput(Exception):
 
 
 class ClaudeProvider:
-    """Claude via the official anthropic SDK, structured outputs, default claude-opus-5."""
+    """Claude via the official anthropic SDK, structured outputs, default claude-sonnet-5."""
 
-    def __init__(self, model: str = "claude-opus-5", max_tokens: int = 24000) -> None:
+    def __init__(self, model: str = "claude-sonnet-5", max_tokens: int = 24000) -> None:
         import anthropic
         import httpx
 

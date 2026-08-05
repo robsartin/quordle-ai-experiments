@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from quordle import wordlist
 from quordle.board import Board
 from quordle.engine import Environment, SimEngine, TurnFeedback
+from quordle.gemini_provider import GeminiProvider
 from quordle.llm_policy import Assist, LLMPolicy
 from quordle.openers import OPENERS
 from quordle.policy import FixedOpenersThenGreedy, Policy
@@ -20,6 +21,20 @@ from quordle.solver import SolveResult, solve
 
 DEFAULT_LOG = "data/quordle_games.jsonl"
 MAX_REJECT_RETRIES = 3
+
+
+def _transient_error_types() -> tuple[type[Exception], ...]:
+    """Per-call failures a multi-game sweep should skip (not crash on): a
+    provider connection/timeout stall and no-structured-output. Auth / 4xx /
+    bad-request errors (anthropic.APIStatusError, google.genai ClientError) are
+    deliberately NOT included -- those are real bugs that must fail loudly
+    rather than silently skip every game. Imported lazily to keep module import
+    light, matching the existing per-loop import style."""
+    import httpx
+    from anthropic import APIConnectionError
+    from google.genai import errors as genai_errors
+
+    return (APIConnectionError, NoStructuredOutput, genai_errors.ServerError, httpx.TransportError)
 
 
 class _ContextEnv(Environment, Protocol):
@@ -112,8 +127,6 @@ def run_many(
     an out-of-credits error still propagates loudly) is skipped and the batch
     continues, instead of one stall crashing a multi-hour sweep.
     """
-    from anthropic import APIConnectionError
-
     rng = random.Random(seed)
     records: list[dict[str, Any]] = []
     for offset in range(count):
@@ -128,7 +141,7 @@ def run_many(
                 allowed=allowed,
                 metadata=metadata,
             )
-        except (APIConnectionError, NoStructuredOutput) as exc:
+        except _transient_error_types() as exc:
             print(f"Sim game {seq} interrupted by a transient API error ({exc!r}); skipping.")
             continue
         records.append(record)
@@ -164,7 +177,7 @@ def next_seq(path: str) -> int:
 
 
 def build_policy_factory(
-    player: str, assist: str, model: str, fixed_openers: int
+    player: str, assist: str, model: str | None, fixed_openers: int
 ) -> tuple[Callable[[], Policy], dict[str, Any]]:
     openers = OPENERS[:fixed_openers]
     if player == "heuristic":
@@ -175,15 +188,30 @@ def build_policy_factory(
         return heuristic_factory, {"player": "heuristic", "openers": fixed_openers}
     if player == "claude":
         assist_level = Assist(assist)
+        resolved = model or "claude-sonnet-5"
 
         def claude_factory() -> Policy:
-            return LLMPolicy(ClaudeProvider(model=model), assist=assist_level, openers=openers)
+            return LLMPolicy(ClaudeProvider(model=resolved), assist=assist_level, openers=openers)
 
         return claude_factory, {
             "player": "claude",
-            "model": model,
+            "model": resolved,
             "assist": assist,
             "mode": "claude",
+            "openers": fixed_openers,
+        }
+    if player == "gemini":
+        assist_level = Assist(assist)
+        resolved = model or "gemini-3.5-flash"
+
+        def gemini_factory() -> Policy:
+            return LLMPolicy(GeminiProvider(model=resolved), assist=assist_level, openers=openers)
+
+        return gemini_factory, {
+            "player": "gemini",
+            "model": resolved,
+            "assist": assist,
+            "mode": "gemini",
             "openers": fixed_openers,
         }
     raise ValueError(f"unknown player: {player!r}")
@@ -220,8 +248,6 @@ def _play_browser_game(
     before a guess). Auth/bad-request errors propagate, since those are real
     bugs that should fail loudly rather than silently ending every game.
     """
-    from anthropic import APIConnectionError
-
     from quordle.browser.browser_env import GuessRejected
 
     full = frozenset(w.upper() for w in answers)
@@ -242,7 +268,7 @@ def _play_browser_game(
                     env.remaining_guesses(),
                     excluded=frozenset(excluded),
                 )
-            except (APIConnectionError, NoStructuredOutput) as exc:
+            except _transient_error_types() as exc:
                 return SolveResult(guesses, solved_on), exc
             try:
                 result = env.submit(guess)
@@ -432,9 +458,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", default=DEFAULT_LOG)
     parser.add_argument("--date", default="2026-08-01")
-    parser.add_argument("--player", choices=["heuristic", "claude"], default="heuristic")
+    parser.add_argument("--player", choices=["heuristic", "claude", "gemini"], default="heuristic")
     parser.add_argument("--assist", choices=["none", "constraints", "candidates"], default="none")
-    parser.add_argument("--model", default="claude-opus-5")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="model id; defaults per player (claude: claude-sonnet-5, gemini: gemini-3.5-flash)",
+    )
     parser.add_argument("--env", choices=["sim", "browser"], default="sim")
     parser.add_argument("--headed", action="store_true")
     parser.add_argument(
@@ -442,7 +472,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         default=2,
         help="play this many precomputed openers with no provider call before "
-        "handing off (heuristic: greedy; claude: the LLM); 0 recovers pure-LLM",
+        "handing off (heuristic: greedy; claude/gemini: the LLM); 0 recovers pure-LLM",
     )
     return parser
 
