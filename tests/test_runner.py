@@ -717,3 +717,28 @@ def test_run_browser_games_carries_browser_metadata():
     )
     assert len(records) == 2
     assert all(r["player"] == "claude" and r["mode"] == "browser" for r in records)
+
+
+def test_run_many_skips_game_on_gemini_rate_limit_429():
+    # 429 RESOURCE_EXHAUSTED is the free tier's rate limit. google-genai raises it
+    # as ClientError (a 4xx), so the type alone can't tell it from a bad key (400/401)
+    # -- the status code must. A throttled game is skipped, not a sweep-killer (#39).
+    from google.genai import errors as genai_errors
+
+    from quordle import wordlist
+    from quordle.runner import run_many
+
+    class _Throttled:
+        def choose(self, *args, **kwargs):
+            raise genai_errors.ClientError(429, {"error": {"message": "quota"}})
+
+    records = run_many(
+        1,
+        seed=0,
+        policy_factory=lambda: _Throttled(),
+        answers=wordlist.load_answers(),
+        allowed=wordlist.load_allowed(),
+        start_seq=1,
+        date="2026-08-04",
+    )
+    assert records == []

@@ -37,6 +37,18 @@ def _transient_error_types() -> tuple[type[Exception], ...]:
     return (APIConnectionError, NoStructuredOutput, genai_errors.ServerError, httpx.TransportError)
 
 
+def is_transient_error(exc: Exception) -> bool:
+    """True for a per-call failure a sweep should skip: any of
+    `_transient_error_types()`, plus a Gemini 429 rate limit. google-genai raises
+    429 as ClientError -- the same type as a bad-key 400/401 -- so only the status
+    code separates "throttled, try another game" from "real bug, fail loudly"."""
+    if isinstance(exc, _transient_error_types()):
+        return True
+    from google.genai import errors as genai_errors
+
+    return isinstance(exc, genai_errors.ClientError) and exc.code == 429
+
+
 class _ContextEnv(Environment, Protocol):
     """An Environment that's also its own context manager, like BrowserEnv.
 
@@ -141,7 +153,9 @@ def run_many(
                 allowed=allowed,
                 metadata=metadata,
             )
-        except _transient_error_types() as exc:
+        except Exception as exc:
+            if not is_transient_error(exc):
+                raise
             print(f"Sim game {seq} interrupted by a transient API error ({exc!r}); skipping.")
             continue
         records.append(record)
@@ -268,7 +282,9 @@ def _play_browser_game(
                     env.remaining_guesses(),
                     excluded=frozenset(excluded),
                 )
-            except _transient_error_types() as exc:
+            except Exception as exc:
+                if not is_transient_error(exc):
+                    raise
                 return SolveResult(guesses, solved_on), exc
             try:
                 result = env.submit(guess)
