@@ -5,6 +5,7 @@ import json
 import os
 import random
 import shutil
+import time
 from collections.abc import Callable
 from types import TracebackType
 from typing import Any, Protocol
@@ -18,6 +19,7 @@ from quordle.openers import OPENERS
 from quordle.policy import FixedOpenersThenGreedy, Policy
 from quordle.provider import ClaudeProvider, NoStructuredOutput
 from quordle.solver import SolveResult, solve
+from quordle.sweep import SweepResult, completed_puzzles, puzzle_stream, sweep_until_completed
 
 DEFAULT_LOG = "data/quordle_games.jsonl"
 MAX_REJECT_RETRIES = 3
@@ -162,6 +164,57 @@ def run_many(
         if out is not None:
             append_jsonl(out, [record])
     return records
+
+
+ATTEMPTS_PER_GAME = 4  # default attempt cap: this many tries per game still owed
+
+
+def run_until_completed(
+    target: int,
+    *,
+    seed: int,
+    policy_factory: Callable[[], Policy],
+    answers: tuple[str, ...],
+    allowed: frozenset[str],
+    date: str,
+    metadata: dict[str, Any],
+    out: str,
+    max_attempts: int | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    backoff_base: float = 10.0,
+    backoff_cap: float = 120.0,
+) -> SweepResult:
+    """Top up the log until it holds `target` completed sim games for this config
+    (`metadata`: player/model/assist/mode/openers), instead of a fixed `count`
+    attempts (issue #39).
+
+    A throttled attempt (see `is_transient_error`) is retried on a fresh puzzle
+    with backoff and never counts toward `target`; puzzles already completed in
+    the log for this config are never replayed, so a re-run with the same seed just
+    plays the shortfall. Each game is appended the instant it finishes.
+    """
+    done = completed_puzzles(out, metadata)
+    shortfall = max(0, target - len(done))
+    cap = max_attempts if max_attempts is not None else ATTEMPTS_PER_GAME * shortfall
+
+    def play(picks: list[str], seq: int) -> dict[str, Any]:
+        return run_game(
+            picks, policy_factory(), seq=seq, date=date, allowed=allowed, metadata=metadata
+        )
+
+    return sweep_until_completed(
+        target,
+        already_completed=len(done),
+        puzzles=puzzle_stream(seed, answers, done=done),
+        play=play,
+        on_record=lambda record: append_jsonl(out, [record]),
+        is_transient=is_transient_error,
+        max_attempts=cap,
+        sleep=sleep,
+        backoff_base=backoff_base,
+        backoff_cap=backoff_cap,
+        start_seq=next_seq(out),
+    )
 
 
 def append_jsonl(path: str, records: list[dict[str, Any]]) -> None:

@@ -742,3 +742,93 @@ def test_run_many_skips_game_on_gemini_rate_limit_429():
         date="2026-08-04",
     )
     assert records == []
+
+
+class _ThrottleOnNthGame:
+    """policy_factory whose Nth game (1-based, counting every attempt) raises a
+    Gemini 503 on its first move; other games are played by the real heuristic."""
+
+    def __init__(self, throttle_games):
+        self.throttle_games = set(throttle_games)
+        self.games = 0
+        self.throttles = 0
+
+    def __call__(self):
+        from google.genai import errors as genai_errors
+
+        from quordle.policy import FixedOpenersThenGreedy
+
+        self.games += 1
+        if self.games in self.throttle_games:
+            self.throttles += 1
+
+            class _Throttled:
+                def choose(self, *args, **kwargs):
+                    raise genai_errors.ServerError(503, {"error": {"message": "high demand"}})
+
+            return _Throttled()
+        return FixedOpenersThenGreedy()
+
+
+_SWEEP_META = {
+    "player": "gemini",
+    "model": "gemini-3.5-flash",
+    "assist": "none",
+    "mode": "gemini",
+    "openers": 2,
+}
+
+
+def _run_until(tmp_path, factory, target, **kw):
+    from quordle import wordlist
+    from quordle.runner import run_until_completed
+
+    return run_until_completed(
+        target,
+        seed=kw.pop("seed", 0),
+        policy_factory=factory,
+        answers=wordlist.load_answers(),
+        allowed=wordlist.load_allowed(),
+        date="2026-08-04",
+        metadata=_SWEEP_META,
+        out=str(tmp_path / "games.jsonl"),
+        sleep=lambda s: None,
+        **kw,
+    )
+
+
+def _logged(tmp_path):
+    path = tmp_path / "games.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_run_until_completed_logs_n_games_despite_throttled_attempts(tmp_path):
+    factory = _ThrottleOnNthGame({1, 3, 4})
+    result = _run_until(tmp_path, factory, 3)
+    assert factory.throttles == 3  # precondition: the throttling really happened
+    records = _logged(tmp_path)
+    assert len(records) == 3 and result.reached_target
+    assert result.attempts == 6 and result.throttled == 3
+    assert all(r["player"] == "gemini" and r["model"] == "gemini-3.5-flash" for r in records)
+    assert len({tuple(sorted(w["answer"] for w in r["words"])) for r in records}) == 3
+
+
+def test_run_until_completed_rerun_tops_up_without_replaying_logged_puzzles(tmp_path):
+    first = _run_until(tmp_path, _ThrottleOnNthGame({2}), 2)
+    assert first.reached_target and len(_logged(tmp_path)) == 2
+    # same seed, bigger target: only the shortfall is played, on puzzles not in the log
+    second = _run_until(tmp_path, _ThrottleOnNthGame(set()), 5)
+    records = _logged(tmp_path)
+    assert second.completed == 3 and len(records) == 5
+    puzzles = [tuple(sorted(w["answer"] for w in r["words"])) for r in records]
+    assert len(set(puzzles)) == 5  # no duplicates across the two runs
+    assert len({r["seq"] for r in records}) == 5  # seqs stay unique across runs
+
+
+def test_run_until_completed_does_not_count_other_configs_toward_n(tmp_path):
+    other = dict(_SWEEP_META, assist="candidates")
+    (tmp_path / "games.jsonl").write_text(
+        json.dumps({"seq": 1, **other, "words": [{"answer": a} for a in "ABCD"]}) + "\n"
+    )
+    result = _run_until(tmp_path, _ThrottleOnNthGame(set()), 2)
+    assert result.completed == 2  # the other-config game did not count
