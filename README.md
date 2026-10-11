@@ -40,6 +40,8 @@ shape.
 pip install -e ".[dev]"
 quordle-sim -n 100 --seed 0                       # heuristic games -> data/quordle_games.jsonl
 quordle-sim --player claude -n 5 --assist none    # Claude-played games (needs API access)
+quordle-sim --player gemini --model gemini-3.5-flash --target-completed 25 --seed 7
+                                                  # top up to 25 completed Gemini games, retrying throttles
 quordle-stats                                     # build quordle_dashboard.html
 
 python -m playwright install chromium             # one-time, needed for --env browser
@@ -49,6 +51,12 @@ quordle-sim --env browser --player claude         # plays one live quordle.com g
 `--env browser` plays a single live game against beta.quordle.com via Playwright
 (headless by default; pass `--headed` to watch it) and logs it with `mode:"browser"`
 instead of `mode:"sim"`/`mode:"claude"`.
+
+`--target-completed N` (sim only) is for throttled free-tier Gemini runs: it keeps playing
+fresh puzzles, backing off on 429/503/504, until the log holds N *completed* games for that
+player/model/assist/openers config. Throttled attempts never count, and re-running the same
+`--seed` plays only the shortfall without replaying logged puzzles. `--max-attempts` bounds it
+(exit status 1 if it stops short). See [ADR 18](docs/adr/0018-throttle-robust-gemini-sweeps.md).
 
 Open `quordle_dashboard.html` in any browser.
 

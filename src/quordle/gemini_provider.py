@@ -4,6 +4,11 @@ provider.py -- no cross-provider shim, per ADR 17."""
 
 from quordle.provider import _REQUEST_TIMEOUT_S, GuessResponse, NoStructuredOutput
 
+_RETRY_ATTEMPTS = 3  # including the first call
+_RETRY_INITIAL_DELAY_S = 2.0
+_RETRY_MAX_DELAY_S = 20.0
+_RETRY_STATUS_CODES = (429, 503, 504)  # rate limit, unavailable, deadline exceeded
+
 
 class GeminiProvider:
     """Gemini via the official google-genai SDK, native structured output,
@@ -18,8 +23,23 @@ class GeminiProvider:
         # runner's transient-skip path can catch a true stall in bounded time.
         # HttpOptions.timeout is in milliseconds. The SDK reads GEMINI_API_KEY
         # from the env; construction makes no network call.
+        #
+        # Throttle retry (issue #39): the free tier answers 429/503/504 for a
+        # large share of calls. A few SDK-side retries with backoff cut the skip
+        # rate at the source. Kept deliberately small -- each attempt can burn
+        # the full read timeout, so worst case per call is attempts * 150s plus
+        # backoff -- and a real outage still surfaces (the runner skips it, and
+        # the sweep's attempt cap stops a persistent one).
         self._client = genai.Client(
-            http_options=types.HttpOptions(timeout=int(_REQUEST_TIMEOUT_S * 1000))
+            http_options=types.HttpOptions(
+                timeout=int(_REQUEST_TIMEOUT_S * 1000),
+                retry_options=types.HttpRetryOptions(
+                    attempts=_RETRY_ATTEMPTS,
+                    initial_delay=_RETRY_INITIAL_DELAY_S,
+                    max_delay=_RETRY_MAX_DELAY_S,
+                    http_status_codes=list(_RETRY_STATUS_CODES),
+                ),
+            )
         )
         self._model = model
 

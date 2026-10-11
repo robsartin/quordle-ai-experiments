@@ -58,3 +58,6 @@
 - [17. Let LLMs play as a policy, behind a provider abstraction](0017-llm-backed-policy-and-providers.md) — _Accepted_
   An LLM player is just another policy; Claude (anthropic SDK, claude-opus-5) and Gemini (google-genai) sit behind an LLMProvider interface, with engine-assist level as an experiment axis.
   Related: [15. Pluggable policy and objective](0015-pluggable-policy-and-objective.md), [13. Separate the solver from the environment](0013-solver-environment-separation.md)
+- [18. Make Gemini sweeps throttle-robust: bounded SDK retry plus top-up until N completed](0018-throttle-robust-gemini-sweeps.md) — _Accepted_
+  Free-tier throttling leaves a fixed-N sweep short; completed games are counted from the log and topped up on fresh, deduplicated puzzles.
+  Related: [17. Let LLMs play as a policy, behind a provider abstraction](0017-llm-backed-policy-and-providers.md), [16. Record games as append-only JSONL](0016-jsonl-log-and-static-dashboard.md)

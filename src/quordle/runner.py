@@ -5,6 +5,8 @@ import json
 import os
 import random
 import shutil
+import sys
+import time
 from collections.abc import Callable
 from types import TracebackType
 from typing import Any, Protocol
@@ -18,6 +20,7 @@ from quordle.openers import OPENERS
 from quordle.policy import FixedOpenersThenGreedy, Policy
 from quordle.provider import ClaudeProvider, NoStructuredOutput
 from quordle.solver import SolveResult, solve
+from quordle.sweep import SweepResult, completed_puzzles, puzzle_stream, sweep_until_completed
 
 DEFAULT_LOG = "data/quordle_games.jsonl"
 MAX_REJECT_RETRIES = 3
@@ -35,6 +38,18 @@ def _transient_error_types() -> tuple[type[Exception], ...]:
     from google.genai import errors as genai_errors
 
     return (APIConnectionError, NoStructuredOutput, genai_errors.ServerError, httpx.TransportError)
+
+
+def is_transient_error(exc: Exception) -> bool:
+    """True for a per-call failure a sweep should skip: any of
+    `_transient_error_types()`, plus a Gemini 429 rate limit. google-genai raises
+    429 as ClientError -- the same type as a bad-key 400/401 -- so only the status
+    code separates "throttled, try another game" from "real bug, fail loudly"."""
+    if isinstance(exc, _transient_error_types()):
+        return True
+    from google.genai import errors as genai_errors
+
+    return isinstance(exc, genai_errors.ClientError) and exc.code == 429
 
 
 class _ContextEnv(Environment, Protocol):
@@ -141,13 +156,66 @@ def run_many(
                 allowed=allowed,
                 metadata=metadata,
             )
-        except _transient_error_types() as exc:
+        except Exception as exc:
+            if not is_transient_error(exc):
+                raise
             print(f"Sim game {seq} interrupted by a transient API error ({exc!r}); skipping.")
             continue
         records.append(record)
         if out is not None:
             append_jsonl(out, [record])
     return records
+
+
+ATTEMPTS_PER_GAME = 4  # default attempt cap: this many tries per game still owed
+
+
+def run_until_completed(
+    target: int,
+    *,
+    seed: int,
+    policy_factory: Callable[[], Policy],
+    answers: tuple[str, ...],
+    allowed: frozenset[str],
+    date: str,
+    metadata: dict[str, Any],
+    out: str,
+    max_attempts: int | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    backoff_base: float = 10.0,
+    backoff_cap: float = 120.0,
+) -> SweepResult:
+    """Top up the log until it holds `target` completed sim games for this config
+    (`metadata`: player/model/assist/mode/openers), instead of a fixed `count`
+    attempts (issue #39).
+
+    A throttled attempt (see `is_transient_error`) is retried on a fresh puzzle
+    with backoff and never counts toward `target`; puzzles already completed in
+    the log for this config are never replayed, so a re-run with the same seed just
+    plays the shortfall. Each game is appended the instant it finishes.
+    """
+    done = completed_puzzles(out, metadata)
+    shortfall = max(0, target - len(done))
+    cap = max_attempts if max_attempts is not None else ATTEMPTS_PER_GAME * shortfall
+
+    def play(picks: list[str], seq: int) -> dict[str, Any]:
+        return run_game(
+            picks, policy_factory(), seq=seq, date=date, allowed=allowed, metadata=metadata
+        )
+
+    return sweep_until_completed(
+        target,
+        already_completed=len(done),
+        puzzles=puzzle_stream(seed, answers, done=done),
+        play=play,
+        on_record=lambda record: append_jsonl(out, [record]),
+        is_transient=is_transient_error,
+        max_attempts=cap,
+        sleep=sleep,
+        backoff_base=backoff_base,
+        backoff_cap=backoff_cap,
+        start_seq=next_seq(out),
+    )
 
 
 def append_jsonl(path: str, records: list[dict[str, Any]]) -> None:
@@ -268,7 +336,9 @@ def _play_browser_game(
                     env.remaining_guesses(),
                     excluded=frozenset(excluded),
                 )
-            except _transient_error_types() as exc:
+            except Exception as exc:
+                if not is_transient_error(exc):
+                    raise
                 return SolveResult(guesses, solved_on), exc
             try:
                 result = env.submit(guess)
@@ -474,12 +544,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="play this many precomputed openers with no provider call before "
         "handing off (heuristic: greedy; claude/gemini: the LLM); 0 recovers pure-LLM",
     )
+    parser.add_argument(
+        "--target-completed",
+        type=int,
+        default=None,
+        metavar="N",
+        help="sim only: instead of -n attempts, keep playing fresh puzzles (retrying "
+        "throttled ones with backoff) until the log holds N completed games for this "
+        "player/model/assist/openers config; re-running the same --seed plays only the "
+        "shortfall. Exits 1 if --max-attempts ends it short (issue #39)",
+    )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=None,
+        help="with --target-completed: cap on games started (default: 4 per game still owed)",
+    )
     return parser
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, *, sleep: Callable[[float], None] = time.sleep) -> None:
     parser = build_arg_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.target_completed is not None and args.env != "sim":
+        parser.error("--target-completed is sim-only (browser puzzles cannot be advanced)")
 
     factory, metadata = build_policy_factory(
         args.player, args.assist, args.model, args.fixed_openers
@@ -497,6 +585,29 @@ def main() -> None:
             out=args.out,  # append each game as it finishes (issue #26)
         )
         print(f"Appended {len(records)} {args.player} browser game(s) to {args.out}")
+        return
+
+    if args.target_completed is not None:
+        result = run_until_completed(
+            args.target_completed,
+            seed=args.seed,
+            policy_factory=factory,
+            answers=wordlist.load_answers(),
+            allowed=wordlist.load_allowed(),
+            date=args.date,
+            metadata=metadata,
+            out=args.out,
+            max_attempts=args.max_attempts,
+            sleep=sleep,
+        )
+        have = len(completed_puzzles(args.out, metadata))
+        print(
+            f"{args.player}: {have} completed of {args.target_completed} target in {args.out} "
+            f"(this run: {result.completed} added, {result.throttled} throttled, "
+            f"{result.attempts} attempts)"
+        )
+        if not result.reached_target:
+            sys.exit(1)
         return
 
     records = run_many(

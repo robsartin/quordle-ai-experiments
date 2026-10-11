@@ -51,3 +51,17 @@ def test_gemini_provider_returns_a_five_letter_word():
 
     resp = GeminiProvider().next_guess("Reply with any common 5-letter English word as your guess.")
     assert len(resp.guess.strip()) == 5
+
+
+def test_gemini_provider_retries_throttle_statuses_with_bounded_attempts(monkeypatch):
+    # Issue #39 option C: retry 429/503/504 inside the SDK to cut the skip rate at
+    # the source. Attempts stay small: each attempt can take up to the 150s read
+    # timeout, so the worst-case wall time per call is attempts * 150s + backoff.
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    from quordle.gemini_provider import GeminiProvider
+
+    retry = GeminiProvider()._client._api_client._http_options.retry_options
+    assert retry is not None
+    assert {429, 503, 504} <= set(retry.http_status_codes or [])
+    assert retry.attempts is not None and 2 <= retry.attempts <= 4
+    assert retry.max_delay is not None and retry.max_delay <= 30

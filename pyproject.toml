@@ -10,7 +10,8 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = [
     "matplotlib>=3.5",
-    "anthropic>=0.40",
+    # <1: anthropic 1.x takes an httpx2 client; provider.py passes an httpx.Client.
+    "anthropic>=0.40,<1",
     "google-genai>=1.0",
     "pydantic>=2",
     "playwright>=1.40",
