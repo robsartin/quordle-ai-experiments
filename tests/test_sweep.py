@@ -118,3 +118,93 @@ def test_completed_puzzles_ignores_blank_lines(tmp_path):
         "\n" + __import__("json").dumps(_record(["CRANE", "SLATE", "PLATE", "GRAPE"])) + "\n\n"
     )
     assert len(completed_puzzles(str(log), _CONFIG)) == 1
+
+
+class _Throttle(Exception):
+    """Stands in for a 429/503/504 from the provider."""
+
+
+class _FakeGame:
+    """A scripted `play`: throttles on the listed 1-based attempt numbers, else
+    returns a scored record. Counts throttles so a test can assert its own
+    precondition (the fake really did throttle) -- otherwise 'throttled attempts
+    are not counted' would pass vacuously against a fake that never throttles."""
+
+    def __init__(self, throttle_on=(), boom_on=()):
+        self.throttle_on = set(throttle_on)
+        self.boom_on = set(boom_on)
+        self.attempts = 0
+        self.throttles = 0
+        self.played = []
+
+    def __call__(self, picks, seq):
+        self.attempts += 1
+        self.played.append(list(picks))
+        if self.attempts in self.boom_on:
+            raise ValueError("a real bug")
+        if self.attempts in self.throttle_on:
+            self.throttles += 1
+            raise _Throttle()
+        return {"seq": seq, "words": [{"answer": a} for a in picks]}
+
+
+def _puzzles():
+    from quordle import wordlist
+    from quordle.sweep import puzzle_stream
+
+    return puzzle_stream(3, wordlist.load_answers(), done=set())
+
+
+def _sweep(play, *, target=3, already=0, max_attempts=50, sleeps=None, records=None):
+    from quordle.sweep import sweep_until_completed
+
+    sleeps = [] if sleeps is None else sleeps
+    records = [] if records is None else records
+    return sweep_until_completed(
+        target,
+        already_completed=already,
+        puzzles=_puzzles(),
+        play=play,
+        on_record=records.append,
+        is_transient=lambda exc: isinstance(exc, _Throttle),
+        max_attempts=max_attempts,
+        sleep=sleeps.append,
+        backoff_base=5.0,
+        backoff_cap=60.0,
+        log=lambda msg: None,
+    )
+
+
+def test_sweep_plays_exactly_the_shortfall_when_nothing_is_throttled():
+    play, records = _FakeGame(), []
+    result = _sweep(play, target=5, already=2, records=records)
+    assert (result.completed, result.attempts, result.throttled) == (3, 3, 0)
+    assert result.reached_target is True
+    assert len(records) == 3
+
+
+def test_sweep_retries_throttled_attempts_and_never_counts_them_toward_n():
+    # THE issue-#39 behaviour. Attempts 1, 2 and 4 are throttled; the sweep must keep
+    # going on fresh puzzles until 3 games genuinely completed.
+    play, records = _FakeGame(throttle_on={1, 2, 4}), []
+    result = _sweep(play, target=3, records=records)
+    assert play.throttles == 3  # precondition: the fake really throttled
+    assert result.completed == 3 and len(records) == 3
+    assert result.attempts == 6 and result.throttled == 3
+    assert result.reached_target is True
+    # every attempt, throttled or not, got a different puzzle -> no duplicates
+    assert len({tuple(sorted(p)) for p in play.played}) == 6
+
+
+def test_sweep_stops_at_the_attempt_cap_when_every_attempt_is_throttled():
+    play, records = _FakeGame(throttle_on=range(1, 100)), []
+    result = _sweep(play, target=3, max_attempts=5, records=records)
+    assert play.throttles == 5  # precondition: it really was all throttles
+    assert result.attempts == 5 and result.completed == 0 and records == []
+    assert result.reached_target is False
+
+
+def test_sweep_does_nothing_when_the_log_already_holds_n_completed():
+    play = _FakeGame()
+    result = _sweep(play, target=3, already=3)
+    assert play.attempts == 0 and result.completed == 0 and result.reached_target is True

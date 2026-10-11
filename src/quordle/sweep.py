@@ -11,7 +11,8 @@ A throttled or otherwise errored attempt produces no record and never counts.
 
 import json
 import random
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 from typing import Any
 
 # The record fields that identify an experiment config. Two logged games belong to
@@ -90,3 +91,63 @@ def completed_puzzles(path: str, config: dict[str, Any]) -> list[tuple[str, ...]
                 continue
             puzzles.append(puzzle_key(w["answer"] for w in record["words"]))
     return puzzles
+
+
+@dataclass(frozen=True)
+class SweepResult:
+    """What a top-up run did. `completed` counts only games added this run."""
+
+    completed: int
+    attempts: int
+    throttled: int
+    reached_target: bool
+
+
+def sweep_until_completed(
+    target: int,
+    *,
+    already_completed: int,
+    puzzles: Iterator[list[str]],
+    play: Callable[[list[str], int], dict[str, Any]],
+    on_record: Callable[[dict[str, Any]], None],
+    is_transient: Callable[[Exception], bool],
+    max_attempts: int,
+    sleep: Callable[[float], None],
+    backoff_base: float,
+    backoff_cap: float,
+    start_seq: int = 1,
+    log: Callable[[str], None] = print,
+) -> SweepResult:
+    """Play fresh puzzles until the config holds `target` completed games.
+
+    `play(picks, seq)` returns a scored record or raises. A transient (throttle)
+    error means the attempt produced no result: it is not counted toward the
+    target, the next attempt takes a *new* puzzle, and the sweep backs off. Any
+    other exception is a real bug and propagates (records already handed to
+    `on_record` are kept). `max_attempts` bounds total attempts so a persistent
+    outage ends the sweep instead of spinning.
+    """
+    completed = attempts = throttled = 0
+    while already_completed + completed < target and attempts < max_attempts:
+        picks = next(puzzles, None)
+        if picks is None:
+            log("Puzzle pool exhausted; stopping.")
+            break
+        seq = start_seq + attempts
+        attempts += 1
+        try:
+            record = play(picks, seq)
+        except Exception as exc:
+            if not is_transient(exc):
+                raise
+            throttled += 1
+            log(f"Attempt {attempts} throttled ({exc!r}); not counted, moving to a fresh puzzle.")
+            continue
+        on_record(record)
+        completed += 1
+    return SweepResult(
+        completed=completed,
+        attempts=attempts,
+        throttled=throttled,
+        reached_target=already_completed + completed >= target,
+    )
