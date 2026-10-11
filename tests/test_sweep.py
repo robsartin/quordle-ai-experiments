@@ -231,3 +231,32 @@ def test_sweep_never_sleeps_when_nothing_is_throttled():
     sleeps = []
     _sweep(_FakeGame(), target=3, sleeps=sleeps)
     assert sleeps == []
+
+
+def test_sweep_propagates_a_non_transient_error_and_keeps_games_already_recorded():
+    import pytest
+
+    play, records = _FakeGame(boom_on={3}), []
+    with pytest.raises(ValueError, match="a real bug"):
+        _sweep(play, target=5, records=records)
+    assert len(records) == 2  # games 1-2 were handed to on_record before the bug
+
+
+def test_sweep_stops_cleanly_when_the_puzzle_pool_is_exhausted():
+    from quordle.sweep import puzzle_stream, sweep_until_completed
+
+    play = _FakeGame()
+    result = sweep_until_completed(
+        10,
+        already_completed=0,
+        puzzles=puzzle_stream(1, ("AAAAA", "BBBBB", "CCCCC", "DDDDD", "EEEEE"), done=set()),
+        play=play,
+        on_record=lambda r: None,
+        is_transient=lambda exc: False,
+        max_attempts=100,
+        sleep=lambda s: None,
+        backoff_base=1.0,
+        backoff_cap=1.0,
+        log=lambda msg: None,
+    )
+    assert result.completed == 5 and result.reached_target is False
