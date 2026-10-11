@@ -52,3 +52,69 @@ def test_puzzle_stream_never_repeats_a_puzzle_within_one_stream():
     words = ("AAAAA", "BBBBB", "CCCCC", "DDDDD", "EEEEE")
     seen = [tuple(sorted(p)) for p in islice(puzzle_stream(1, words, done=set()), 50)]
     assert len(seen) == len(set(seen)) <= 5
+
+
+def _record(answers, **extra):
+    base = {
+        "seq": 1,
+        "mode": "gemini",
+        "player": "gemini",
+        "model": "gemini-3.5-flash",
+        "assist": "none",
+        "openers": 2,
+        "words": [{"board": i + 1, "answer": a, "solvedOnGuess": 3} for i, a in enumerate(answers)],
+    }
+    base.update(extra)
+    return base
+
+
+_CONFIG = {
+    "player": "gemini",
+    "model": "gemini-3.5-flash",
+    "assist": "none",
+    "mode": "gemini",
+    "openers": 2,
+}
+
+
+def _write_log(path, records):
+    import json
+
+    path.write_text("".join(json.dumps(r) + "\n" for r in records))
+
+
+def test_completed_puzzles_counts_only_this_configs_finished_games(tmp_path):
+    from quordle.sweep import completed_puzzles
+
+    log = tmp_path / "games.jsonl"
+    _write_log(
+        log,
+        [
+            _record(["CRANE", "SLATE", "PLATE", "GRAPE"]),  # counts
+            _record(["AAAAA", "BBBBB", "CCCCC", "DDDDD"], assist="candidates"),  # other config
+            _record(["EEEEE", "FFFFF", "GGGGG", "HHHHH"], model="gemini-3.5-pro"),  # other model
+            _record(["IIIII", "JJJJJ", "KKKKK", "LLLLL"], endedEarly=True),  # not completed
+            _record(["MMMMM", "NNNNN", "OOOOO", "PPPPP"], mode="browser"),  # other mode
+            _record(["STOMP", "BLOAT", "FROST", "CLIMB"], won=False),  # a loss still completed
+        ],
+    )
+    assert completed_puzzles(str(log), _CONFIG) == [
+        ("CRANE", "GRAPE", "PLATE", "SLATE"),
+        ("BLOAT", "CLIMB", "FROST", "STOMP"),
+    ]
+
+
+def test_completed_puzzles_is_empty_for_a_missing_log(tmp_path):
+    from quordle.sweep import completed_puzzles
+
+    assert completed_puzzles(str(tmp_path / "nope.jsonl"), _CONFIG) == []
+
+
+def test_completed_puzzles_ignores_blank_lines(tmp_path):
+    from quordle.sweep import completed_puzzles
+
+    log = tmp_path / "games.jsonl"
+    log.write_text(
+        "\n" + __import__("json").dumps(_record(["CRANE", "SLATE", "PLATE", "GRAPE"])) + "\n\n"
+    )
+    assert len(completed_puzzles(str(log), _CONFIG)) == 1

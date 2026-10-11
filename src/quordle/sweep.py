@@ -9,8 +9,15 @@ instantly and offline.
 A throttled or otherwise errored attempt produces no record and never counts.
 """
 
+import json
 import random
 from collections.abc import Iterable, Iterator
+from typing import Any
+
+# The record fields that identify an experiment config. Two logged games belong to
+# the same sweep only if every one of these agrees ("mode" keeps sim and browser
+# apart: a browser game is a different puzzle source and is never topped up here).
+CONFIG_KEYS = ("player", "model", "assist", "mode", "openers")
 
 _MAX_CONSECUTIVE_DUPLICATES = 1000
 
@@ -55,3 +62,31 @@ def backoff_delay(consecutive_throttles: int, *, base: float, cap: float) -> flo
     if consecutive_throttles <= 0:
         return 0.0
     return float(min(cap, base * 2 ** (consecutive_throttles - 1)))
+
+
+def completed_puzzles(path: str, config: dict[str, Any]) -> list[tuple[str, ...]]:
+    """Puzzle keys of every *completed* game in the log for this config.
+
+    Completed = logged for this exact config and not `endedEarly` (a game cut short
+    by a stall or a rejected guess has no full score). A lost game is still
+    completed: it ran to a scored result. A missing log is simply empty; a
+    malformed line raises rather than being silently dropped, because an
+    undercount would make the sweep over-play.
+    """
+    try:
+        fh = open(path, encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    keys = [k for k in CONFIG_KEYS if k in config]
+    puzzles: list[tuple[str, ...]] = []
+    with fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get("endedEarly"):
+                continue
+            if any(record.get(k) != config[k] for k in keys):
+                continue
+            puzzles.append(puzzle_key(w["answer"] for w in record["words"]))
+    return puzzles
