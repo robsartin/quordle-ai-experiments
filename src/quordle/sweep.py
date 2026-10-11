@@ -127,7 +127,7 @@ def sweep_until_completed(
     `on_record` are kept). `max_attempts` bounds total attempts so a persistent
     outage ends the sweep instead of spinning.
     """
-    completed = attempts = throttled = 0
+    completed = attempts = throttled = streak = 0
     while already_completed + completed < target and attempts < max_attempts:
         picks = next(puzzles, None)
         if picks is None:
@@ -141,8 +141,12 @@ def sweep_until_completed(
             if not is_transient(exc):
                 raise
             throttled += 1
+            streak += 1
             log(f"Attempt {attempts} throttled ({exc!r}); not counted, moving to a fresh puzzle.")
+            if attempts < max_attempts:  # no point waiting once the cap ends the sweep
+                sleep(backoff_delay(streak, base=backoff_base, cap=backoff_cap))
             continue
+        streak = 0
         on_record(record)
         completed += 1
     return SweepResult(

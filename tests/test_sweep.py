@@ -208,3 +208,26 @@ def test_sweep_does_nothing_when_the_log_already_holds_n_completed():
     play = _FakeGame()
     result = _sweep(play, target=3, already=3)
     assert play.attempts == 0 and result.completed == 0 and result.reached_target is True
+
+
+def test_sweep_backs_off_exponentially_on_consecutive_throttles_and_resets_on_success():
+    # attempts: 1 throttle, 2 throttle, 3 ok, 4 throttle, 5 ok  (target 2)
+    sleeps = []
+    play = _FakeGame(throttle_on={1, 2, 4})
+    result = _sweep(play, target=2, sleeps=sleeps)
+    assert result.reached_target and play.throttles == 3
+    assert sleeps == [5.0, 10.0, 5.0]  # 1st, 2nd consecutive; reset; 1st again
+
+
+def test_sweep_does_not_sleep_after_the_final_allowed_attempt():
+    sleeps = []
+    play = _FakeGame(throttle_on=range(1, 100))
+    _sweep(play, target=3, max_attempts=3, sleeps=sleeps)
+    assert play.throttles == 3
+    assert sleeps == [5.0, 10.0]  # nothing to wait for after attempt 3
+
+
+def test_sweep_never_sleeps_when_nothing_is_throttled():
+    sleeps = []
+    _sweep(_FakeGame(), target=3, sleeps=sleeps)
+    assert sleeps == []
