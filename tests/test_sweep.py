@@ -12,3 +12,43 @@ def test_backoff_delay_is_zero_when_nothing_has_been_throttled():
     from quordle.sweep import backoff_delay
 
     assert backoff_delay(0, base=5.0, cap=60.0) == 0.0
+
+
+def test_puzzle_stream_is_deterministic_for_a_seed():
+    from itertools import islice
+
+    from quordle import wordlist
+    from quordle.sweep import puzzle_stream
+
+    answers = wordlist.load_answers()
+    a = list(islice(puzzle_stream(7, answers, done=set()), 5))
+    b = list(islice(puzzle_stream(7, answers, done=set()), 5))
+    assert a == b
+    assert all(len(p) == 4 and len(set(p)) == 4 for p in a)
+
+
+def test_puzzle_stream_skips_puzzles_already_completed():
+    # The dedupe guarantee: re-running the same seed must not replay a puzzle the
+    # log already holds -- it advances past it to the next fresh one.
+    from itertools import islice
+
+    from quordle import wordlist
+    from quordle.sweep import puzzle_stream
+
+    answers = wordlist.load_answers()
+    fresh = list(islice(puzzle_stream(7, answers, done=set()), 4))
+    done = {tuple(fresh[0]), tuple(fresh[2])}
+    resumed = list(islice(puzzle_stream(7, answers, done=done), 2))
+    assert resumed == [fresh[1], fresh[3]]
+
+
+def test_puzzle_stream_never_repeats_a_puzzle_within_one_stream():
+    from itertools import islice
+
+    from quordle.sweep import puzzle_stream
+
+    # Only 5 distinct words -> sampling 4 gives at most 5 distinct sets; the stream
+    # must yield each at most once and then end rather than loop forever.
+    words = ("AAAAA", "BBBBB", "CCCCC", "DDDDD", "EEEEE")
+    seen = [tuple(sorted(p)) for p in islice(puzzle_stream(1, words, done=set()), 50)]
+    assert len(seen) == len(set(seen)) <= 5
