@@ -5,6 +5,7 @@ import json
 import os
 import random
 import shutil
+import sys
 import time
 from collections.abc import Callable
 from types import TracebackType
@@ -543,12 +544,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="play this many precomputed openers with no provider call before "
         "handing off (heuristic: greedy; claude/gemini: the LLM); 0 recovers pure-LLM",
     )
+    parser.add_argument(
+        "--target-completed",
+        type=int,
+        default=None,
+        metavar="N",
+        help="sim only: instead of -n attempts, keep playing fresh puzzles (retrying "
+        "throttled ones with backoff) until the log holds N completed games for this "
+        "player/model/assist/openers config; re-running the same --seed plays only the "
+        "shortfall. Exits 1 if --max-attempts ends it short (issue #39)",
+    )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=None,
+        help="with --target-completed: cap on games started (default: 4 per game still owed)",
+    )
     return parser
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, *, sleep: Callable[[float], None] = time.sleep) -> None:
     parser = build_arg_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.target_completed is not None and args.env != "sim":
+        parser.error("--target-completed is sim-only (browser puzzles cannot be advanced)")
 
     factory, metadata = build_policy_factory(
         args.player, args.assist, args.model, args.fixed_openers
@@ -566,6 +585,29 @@ def main() -> None:
             out=args.out,  # append each game as it finishes (issue #26)
         )
         print(f"Appended {len(records)} {args.player} browser game(s) to {args.out}")
+        return
+
+    if args.target_completed is not None:
+        result = run_until_completed(
+            args.target_completed,
+            seed=args.seed,
+            policy_factory=factory,
+            answers=wordlist.load_answers(),
+            allowed=wordlist.load_allowed(),
+            date=args.date,
+            metadata=metadata,
+            out=args.out,
+            max_attempts=args.max_attempts,
+            sleep=sleep,
+        )
+        have = len(completed_puzzles(args.out, metadata))
+        print(
+            f"{args.player}: {have} completed of {args.target_completed} target in {args.out} "
+            f"(this run: {result.completed} added, {result.throttled} throttled, "
+            f"{result.attempts} attempts)"
+        )
+        if not result.reached_target:
+            sys.exit(1)
         return
 
     records = run_many(

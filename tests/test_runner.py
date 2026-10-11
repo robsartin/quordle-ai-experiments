@@ -832,3 +832,53 @@ def test_run_until_completed_does_not_count_other_configs_toward_n(tmp_path):
     )
     result = _run_until(tmp_path, _ThrottleOnNthGame(set()), 2)
     assert result.completed == 2  # the other-config game did not count
+
+
+def test_cli_target_completed_flag_defaults_off_and_parses():
+    from quordle.runner import build_arg_parser
+
+    parser = build_arg_parser()
+    assert parser.parse_args([]).target_completed is None
+    args = parser.parse_args(["--target-completed", "25", "--max-attempts", "80"])
+    assert (args.target_completed, args.max_attempts) == (25, 80)
+
+
+def test_main_target_completed_plays_until_n_are_logged(tmp_path, capsys):
+    from quordle.runner import main
+
+    out = tmp_path / "games.jsonl"
+    main(["--target-completed", "3", "--out", str(out), "--seed", "4"], sleep=lambda s: None)
+    assert len(out.read_text().splitlines()) == 3
+    main(["--target-completed", "3", "--out", str(out), "--seed", "4"], sleep=lambda s: None)
+    assert len(out.read_text().splitlines()) == 3  # already satisfied: plays nothing more
+    assert "3 completed" in capsys.readouterr().out
+
+
+def test_main_target_completed_exits_nonzero_when_the_attempt_cap_leaves_it_short(
+    tmp_path, monkeypatch
+):
+    import pytest
+
+    from quordle import runner
+
+    factory = _ThrottleOnNthGame(set(range(1, 100)))
+    monkeypatch.setattr(runner, "build_policy_factory", lambda *a: (factory, _SWEEP_META))
+    out = tmp_path / "games.jsonl"
+    with pytest.raises(SystemExit) as exc:
+        runner.main(
+            ["--target-completed", "3", "--max-attempts", "4", "--out", str(out)],
+            sleep=lambda s: None,
+        )
+    assert exc.value.code == 1
+    assert factory.throttles == 4  # precondition: every attempt really was throttled
+    assert not out.exists() or out.read_text() == ""
+
+
+def test_main_rejects_target_completed_with_the_browser_env(tmp_path):
+    import pytest
+
+    from quordle.runner import main
+
+    with pytest.raises(SystemExit) as exc:
+        main(["--env", "browser", "--target-completed", "3", "--out", str(tmp_path / "g.jsonl")])
+    assert exc.value.code == 2  # argparse usage error
